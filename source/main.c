@@ -34,6 +34,7 @@
 #include "sdsupp.h"
 #include "freetype.h"
 #include "bitmap.h"
+#include "ui.h"
 
 #ifndef HW_RVL
 #include "aram/sidestep.h"
@@ -386,222 +387,49 @@ void deinitFAT()
 }
 
 u8 skip_selector = 1;
+static const char *device_name(int device)
+{
+	switch (device) {
+	case DEV_GCSDA: return "SD Gecko - Slot A";
+	case DEV_GCSDB: return "SD Gecko - Slot B";
+	case DEV_GCSDC: return "SD2SP2";
+	case DEV_GCODE: return "GC Loader";
+	case DEV_WIISD: return "Wii Front SD";
+	case DEV_WIIUSB: return "USB storage";
+	default: return "No storage device";
+	}
+}
+
 int device_select()
 {
-	u32 p, ph;
-#ifdef HW_RVL
-	u32 wp, wph;
-#endif
-	
-	int x = 170;
-	int y = 280;
-	int x_text = x+15;
-	int y_text = y+20;
-	int selected = 0;
-	u8 draw = 1;
-	setfontsize(14);
-	setfontcolour(COL_FONT);
+	const char *items[DEV_TOTAL];
+	u8 item_devices[DEV_TOTAL];
+	int item_count = 0;
+	int selected;
+	int i;
 
-	int i = 0;
-	u8 selected2device[4] = {0, 0, 0, 0};
-	//If there are no fat devices skip
-	if (!DEVICES[DEV_NUM]){
-		WaitPrompt (NOFAT_MSG);
+	if (!DEVICES[DEV_NUM]) {
+		UI_Message("Storage device", "No supported storage detected.",
+			"Connect SD or USB storage and try again.");
 		return 0;
-	}else if (DEVICES[DEV_NUM] == 1 && skip_selector ){ //Only one device was detected, so mount it, but only on first boot
+	}
+	if (DEVICES[DEV_NUM] == 1 && skip_selector) {
 		skip_selector = 0;
-		for (i=1;i<=DEV_TOTAL;i++)
-		{
+		for (i = 1; i <= DEV_TOTAL; i++)
 			if (DEVICES[i])
 				return i;
-		}
-	}else{
-	skip_selector = 0;
-	//Selector screen
-		while(1)
-		{
-			//Draw device selector
-			if (draw){
-				writeStatusBar("Press A to select","");
-				draw = 0;
-				DrawBoxFilled(x, y, x+290, y+90, COL_BG1);
-				y_text= y+20;
-				x_text = x+15;
-				DrawText(x_text, y_text, "Please select your device:");
-				y_text+=20;
-				x_text += 24;
-		#ifdef HW_RVL
-				if(DEVICES[DEV_WIISD]){
-					DrawText(x_text, y_text, "Wii Front SD slot");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_WIISD;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_WIIUSB]){
-					DrawText(x_text, y_text, "USB storage device");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_WIIUSB;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDA]){
-					DrawText(x_text, y_text, "Slot A SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDA;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDB]){
-					DrawText(x_text, y_text, "Slot B SD Gecko");
-					y_text=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDB;
-							break;
-						}
-					}
-				}
-		#else
-				if(DEVICES[DEV_GCSDC]){
-					DrawText(x_text, y_text, "SD2SP2");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDC;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDA]){
-					DrawText(x_text, y_text, "Slot A SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDA;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDB]){
-					DrawText(x_text, y_text, "Slot B SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDB;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCODE]){
-					DrawText(x_text, y_text, "GC Loader");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCODE;
-							break;
-						}
-					}
-				}
-		#endif
-				
-				//Draw cursor
-				y_text= y+40;
-				x_text = x+20;
-				switch (selected)
-				{
-					case 0:
-						DrawText(x_text, y_text, ">>");
-						break;
-					case 1:
-						DrawText(x_text, y_text+15, ">>");
-						break;
-					case 2:
-						DrawText(x_text, y_text+15+15, ">>");
-						break;
-					case 3:
-						DrawText(x_text, y_text+15+15+15, ">>");
-						break;
-					default:
-						break;
-				}
-			}//end if (draw)
-			
-			p = PAD_ButtonsDown (0);
-	#ifdef HW_RVL
-			wp = WPAD_ButtonsDown (0);
-	#endif
-			
-			if (p & PAD_BUTTON_A
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_A
-		#endif
-			)
-			{
-				//Do something
-				return selected2device[selected];
-			}
-			if (p & PAD_BUTTON_DOWN
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_DOWN
-		#endif
-			)
-			{
-				selected +=1;
-				if (selected >= DEVICES[DEV_NUM]) selected = 0;
-				draw = 1;
-			}
-			if (p & PAD_BUTTON_UP
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_UP
-		#endif
-			)
-			{
-				selected -=1;
-				if (selected < 0) selected = DEVICES[DEV_NUM]-1;
-				draw = 1;
-			}
-			//char msg[256];
-			//sprintf(msg, "Selected device: %d Total %d DN%d SDA%d SDB%d SDC%d GL%d WSD%d WU%d", selected, DEVICES[DEV_NUM], DEVICES[1],DEVICES[2],DEVICES[3],DEVICES[4],DEVICES[5],DEVICES[6] );
-			/*
-#define DEV_NUM 	0
-#define DEV_GCSDA 	1
-#define DEV_GCSDB 	2
-#define DEV_GCSDC 	3
-#define DEV_GCODE 	4
-#define DEV_WIISD 	5
-#define DEV_WIIUSB	6
-			*/
-			//writeStatusBar(msg, "");
-			ShowScreen();
-		}//end while(1)
 	}
-	return 0;
+
+	for (i = 1; i <= DEV_TOTAL; i++) {
+		if (DEVICES[i]) {
+			items[item_count] = device_name(i);
+			item_devices[item_count++] = i;
+		}
+	}
+	skip_selector = 0;
+	selected = UI_Menu("Storage device", "Choose the storage GCMM should use",
+		items, item_count, 0, "A Select   B Back", true);
+	return selected >= 0 ? item_devices[selected] : 0;
 }
 
 /****************************************************************************

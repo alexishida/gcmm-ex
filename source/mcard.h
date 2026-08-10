@@ -13,6 +13,8 @@ void CardListFiles ();
 int CardReadFileHeader (int slot, int id);
 int CardReadFile (int slot, int id);
 int CardWriteFile (int slot);
+int MCardDeleteFile(int slot, int id);
+int MCardFormat(int slot);
 void MC_DeleteMode(int slot);
 void MC_FormatMode(s32 slot);
 void WaitCardError(char *src, int error);

@@ -907,6 +907,71 @@ void MC_DeleteMode(int slot)
 	}
 }
 
+/****************************************************************************
+ * MCardDeleteFile
+ *
+ * Deletes one entry from the directory most recently loaded by
+ * CardGetDirectory(). Confirmation belongs to the task UI so this routine can
+ * also be used safely by multi-selection and move workflows.
+ ****************************************************************************/
+int MCardDeleteFile(int slot, int id)
+{
+	int err;
+
+	if (id < 0 || id >= cardcount)
+		return 0;
+
+	err = MountCard(slot);
+	if (err < 0) {
+		WaitCardError("MCDel Mount", err);
+		return 0;
+	}
+
+	CARD_SetCompany(CardList[id].company);
+	CARD_SetGamecode(CardList[id].gamecode);
+	err = CARD_Delete(slot, (char *)&CardList[id].filename);
+	CARD_Unmount(slot);
+
+	if (err < 0) {
+		WaitCardError("MCDel", err);
+		return 0;
+	}
+	return 1;
+}
+
+/****************************************************************************
+ * MCardFormat
+ *
+ * Performs only the validated format operation. Callers must show the two
+ * explicit confirmations before entering this routine.
+ ****************************************************************************/
+int MCardFormat(int slot)
+{
+	int err;
+
+	err = MountCard(slot);
+	if (err < 0) {
+		WaitCardError("MCFormat Mount", err);
+		return 0;
+	}
+
+	err = CARD_Format(slot);
+	CARD_Unmount(slot);
+	if (err < 0) {
+		WaitCardError("MCFormat", err);
+		return 0;
+	}
+
+	usleep(1000 * 1000);
+	err = MountCard(slot);
+	if (err < 0) {
+		WaitCardError("MCFormat Verify", err);
+		return 0;
+	}
+	CARD_Unmount(slot);
+	return 1;
+}
+
 void MC_FormatMode(s32 slot)
 {
 	int erase = 1;

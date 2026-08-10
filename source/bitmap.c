@@ -19,23 +19,7 @@
 #include "gci.h"
 #include "sdsupp.h"
 
-#ifdef DARK_MODE
-	#include "bg_dark_bmp.h"
-#else
-	#include "bg_bmp.h"	
-#endif
-
-#ifdef HW_DOL
-extern u8 CUR_DEVICE;
-extern bool have_sd;
-	#ifdef DARK_MODE
-		#include "bg_dark_gcload_bmp.h"
-		#include "bg_dark_sd2sp2_bmp.h"
-	#else
-		#include "bg_gcload_bmp.h"
-		#include "bg_sd2sp2_bmp.h"
-	#endif
-#endif
+#include "ui_bg_bmp.h"
 extern u8 selector_flag;
 
 extern card_direntry gci;
@@ -303,27 +287,6 @@ void ShowIcon(u8 *icon) {
 }
 
 void ClearScreen() {
-
-#ifdef HW_DOL
-
-	#ifdef DARK_MODE
-		if (CUR_DEVICE == DEV_GCSDC && have_sd) ShowBMP((u8*) bg_dark_sd2sp2_bmp);
-		else if (CUR_DEVICE == DEV_GCODE && have_sd) ShowBMP((u8*) bg_dark_gcload_bmp);
-		else 
-		ShowBMP((u8*) bg_dark_bmp);
-	#else
-		if (CUR_DEVICE == DEV_GCSDC && have_sd) ShowBMP((u8*) bg_sd2sp2_bmp);
-		else if (CUR_DEVICE == DEV_GCODE && have_sd) ShowBMP((u8*) bg_gcload_bmp);
-		else 
-		ShowBMP((u8*) bg_bmp);
-	#endif
-
-#else
-	#ifdef DARK_MODE
-		ShowBMP((u8*) bg_dark_bmp);
-	#else
-		ShowBMP((u8*) bg_bmp);
-	#endif
-#endif
+	ShowBMP((u8*) ui_bg_bmp);
 
 }
