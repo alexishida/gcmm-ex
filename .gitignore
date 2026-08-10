@@ -1,0 +1,10 @@
+
+/build_WII/
+/build_GC/
+/build_WII_dark/
+/build_GC_dark/
+
+/releases/
+
+*.elf
+*.dol
