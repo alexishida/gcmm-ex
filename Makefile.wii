@@ -22,7 +22,7 @@ DKV		:= $(or $(DKV),0)
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
-TARGET		:=	gcmm_WII
+TARGET		:=	gcmm_ex_WII
 BUILD		:=	build_WII
 
 SOURCES		:=	source source/ui source/storage
@@ -128,7 +128,10 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 # main targets
 #---------------------------------------------------------------------------------
-$(OUTPUT).dol: $(OUTPUT).elf
+$(OUTPUT).dol: $(OUTPUT).elf $(CURDIR)/../scripts/align-dol.py
+	@echo output ... $(notdir $@)
+	@elf2dol $< $@
+	@python3 $(CURDIR)/../scripts/align-dol.py $@
 $(OUTPUT).elf: $(OFILES)
 
 $(OFILES_SOURCES) : $(HFILES)

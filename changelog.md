@@ -2,11 +2,20 @@
 
 This file documents GCMM-EX changes and the historical GCMM change history.
 
-GCMM-EX is based on [suloku's GCMM](https://github.com/suloku/gcmm), with a redesigned codebase and support for current toolchains, devices, filesystems, and future features. Historical entries below were rewritten in U.S. English from [`readme-original.txt`](readme-original.txt) while preserving their original meaning, dates, and contributor credits.
+GCMM-EX manages GameCube memory-card saves and complete card images on
+Nintendo GameCube and Wii. It provides a new interface and workflow while
+retaining selected technical code from [suloku's GCMM](https://github.com/suloku/gcmm)
+for save formats, memory-card compatibility, and hardware safety. Historical
+entries below were rewritten in U.S. English from
+[`readme-original.txt`](readme-original.txt) while preserving their original
+meaning, dates, and contributor credits.
 
 ## [Unreleased]
 
 ### Added
+
+- Configured the isolated Dolphin profile to seed Slot A from local GCI test
+  saves and Slot B from a local RAW test image without modifying source files.
 
 - Added exFAT support for every storage device: Wii SD, Wii USB, SD Gecko, SD2SP2, and GC Loader. Cards larger than 32 GB no longer need to be reformatted as FAT32.
 - Added task-oriented home, settings, memory-card selection, save details, and
@@ -16,7 +25,12 @@ GCMM-EX is based on [suloku's GCMM](https://github.com/suloku/gcmm), with a rede
 
 ### Changed
 
-- Set the GCMM-EX application version to 1.0.
+- Updated the in-app credits for Alex Ishida and GCMM by suloku.
+- Updated Homebrew Channel metadata to match the README's application
+  description.
+- Renamed generated GameCube and Wii DOL outputs to `gcmm_ex_GC.dol` and
+  `gcmm_ex_WII.dol`.
+
 - Clarified that GCMM-EX is a new project with a fully redesigned interface
   and workflow, while retaining technical GCMM code and historical credits.
 - Renamed the application to GCMM-EX and credited Alex Ishida as author.
@@ -35,4 +49,8 @@ GCMM-EX is based on [suloku's GCMM](https://github.com/suloku/gcmm), with a rede
 
 ### Fixed
 
+- Fixed the Dolphin test-profile writer on Windows-style INI files so repeated
+  launches no longer create duplicate Core sections.
+- Aligned generated DOL load sections to 32 bytes for strict loaders, including
+  current Dolphin releases.
 - Cleared the device path during unmounting, preventing stale drive names after using the device selector.

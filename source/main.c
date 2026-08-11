@@ -1668,18 +1668,17 @@ static void run_advanced_menu(void)
 
 static void show_information(void)
 {
-	const char *lines[7];
+	const char *lines[6];
 	char version[48];
 
 	snprintf(version, sizeof(version), "GCMM-EX %s", appversion);
 	lines[0] = version;
-	lines[1] = "Based on GCMM by suloku and contributors";
-	lines[2] = "GCMM foundation: dsbomb, justb, and Askot";
-	lines[3] = "Manages GameCube memory cards and backups";
-	lines[4] = "Supports GameCube and Wii hardware";
-	lines[5] = "Licensed under GNU GPL version 3";
-	lines[6] = "See README and changelog for full credits.";
-	UI_Details("Information and credits", lines, 7);
+	lines[1] = "New interface and workflow";
+	lines[2] = "Author: Alex Ishida";
+	lines[3] = "Based on GCMM by suloku";
+	lines[4] = "Memory-card formats, compatibility, and hardware safety";
+	lines[5] = "See README/changelog for credits. GNU GPL v3.0.";
+	UI_Details("Information and credits", lines, 6);
 }
 
 static void run_settings_menu(void)

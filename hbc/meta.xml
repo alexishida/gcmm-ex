@@ -4,8 +4,8 @@
 	<coder>Alex Ishida</coder>
 	<version>1.0</version>
 	<release_date>20211119000000</release_date>
-	<short_description>GCMM-EX memory card manager</short_description>
-	<long_description>GCMM-EX memory card manager for Wii/GC.
-Based on GCMM by suloku and its contributors.
+	<short_description>GameCube memory-card manager</short_description>
+	<long_description>GCMM-EX manages GameCube memory-card saves and complete card images on Nintendo GameCube and Wii.
+New interface and workflow. Based on GCMM by suloku.
 </long_description>
 </app>

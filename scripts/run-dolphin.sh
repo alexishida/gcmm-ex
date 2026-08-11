@@ -11,43 +11,153 @@ if [ -f "$project_root/.env" ]; then
 fi
 platform=${1:---gc}
 test_user_dir=${DOLPHIN_USER_DIR:-"$project_root/tests/dolphin/user"}
+memorycards_dir=${GCMM_TEST_MEMORYCARDS_DIR:-"$project_root/memorycards"}
+
+set_ini_value() {
+  local ini=$1
+  local section=$2
+  local key=$3
+  local value=$4
+  local temporary
+
+  temporary=$(mktemp "$ini.XXXXXX")
+  GCMM_DOLPHIN_INI_VALUE=$value awk -v section="$section" -v key="$key" '
+    BEGIN {
+      target = "[" section "]"
+      value = ENVIRON["GCMM_DOLPHIN_INI_VALUE"]
+      in_target = 0
+      section_found = 0
+      record_count = 0
+      target_line_count = 0
+    }
+    {
+      sub(/\r$/, "")
+    }
+    $0 == target {
+      in_target = 1
+      if (!section_found) {
+        record_type[++record_count] = "target"
+        section_found = 1
+      }
+      next
+    }
+    $0 ~ /^\[/ {
+      in_target = 0
+    }
+    in_target {
+      if ($0 ~ ("^" key "[[:space:]]*="))
+        next
+      target_line[++target_line_count] = $0
+      next
+    }
+    {
+      record_type[++record_count] = "line"
+      record_line[record_count] = $0
+    }
+    END {
+      if (!section_found) {
+        record_type[++record_count] = "line"
+        record_line[record_count] = ""
+        record_type[++record_count] = "target"
+      }
+      for (i = 1; i <= record_count; i++) {
+        if (record_type[i] == "target") {
+          print target
+          print key " = " value
+          for (j = 1; j <= target_line_count; j++)
+            print target_line[j]
+        } else {
+          print record_line[i]
+        }
+      }
+    }
+  ' "$ini" > "$temporary"
+  mv "$temporary" "$ini"
+}
+
+prepare_test_cards() {
+  local config="$test_user_dir/Config/Dolphin.ini"
+  local card_a_dir="$test_user_dir/GC/GCMM-EX/Card A"
+  local card_b_raw="$test_user_dir/GC/GCMM-EX/Card B.raw"
+  local gci_files=()
+  local raw_files=()
+  local config_card_a_dir=$card_a_dir
+  local config_card_b_raw=$card_b_raw
+
+  mkdir -p "$(dirname -- "$config")" "$card_a_dir"
+
+  if [ -d "$memorycards_dir" ]; then
+    shopt -s nullglob
+    gci_files=("$memorycards_dir"/*.gci)
+    raw_files=("$memorycards_dir"/*.raw)
+    shopt -u nullglob
+
+    if [ "${#gci_files[@]}" -gt 0 ] && ! find "$card_a_dir" -maxdepth 1 -type f -iname '*.gci' -print -quit | grep -q .; then
+      cp -- "${gci_files[@]}" "$card_a_dir/"
+    fi
+
+    if [ "${#raw_files[@]}" -gt 0 ] && [ ! -e "$card_b_raw" ]; then
+      cp -- "${raw_files[0]}" "$card_b_raw"
+    fi
+  fi
+
+  if [[ "$dolphin" == *.exe ]]; then
+    if ! command -v wslpath >/dev/null 2>&1; then
+      echo "Windows Dolphin requires WSL path conversion. Set DOLPHIN to a native build." >&2
+      exit 1
+    fi
+    config_card_a_dir=$(wslpath -w "$card_a_dir")
+    config_card_b_raw=$(wslpath -w "$card_b_raw")
+  fi
+
+  touch "$config"
+  set_ini_value "$config" Core SlotA 8
+  set_ini_value "$config" Core SlotB 1
+  set_ini_value "$config" Core GCIFolderAPath "$config_card_a_dir"
+  set_ini_value "$config" Core MemcardBPath "$config_card_b_raw"
+}
 
 case "$platform" in
   --gc)
-    dol="$project_root/releases/gcmm_GC.dol"
+    dol="$project_root/releases/gcmm_ex_GC.dol"
     ;;
   --wii)
-    dol="$project_root/releases/gcmm_WII.dol"
+    dol="$project_root/releases/gcmm_ex_WII.dol"
+    ;;
+  --setup)
+    platform=
     ;;
   *)
-    echo "Usage: $0 [--gc|--wii]" >&2
+    echo "Usage: $0 [--gc|--wii|--setup]" >&2
     exit 64
     ;;
 esac
 
-if [ ! -f "$dol" ]; then
+if [ -n "$platform" ] && [ ! -f "$dol" ]; then
   echo "Missing $dol. Build it first with: retro-gcwii make ${platform#--}" >&2
   exit 1
 fi
 
-if [ -z "${DOLPHIN:-}" ]; then
+if [ -n "$platform" ] && [ -z "${DOLPHIN:-}" ]; then
   echo "DOLPHIN is not set. Configure it in $project_root/.env." >&2
   exit 1
 fi
-dolphin="$DOLPHIN"
+dolphin=${DOLPHIN:-}
 
-if [ ! -f "$dolphin" ]; then
+if [ -n "$platform" ] && [ ! -f "$dolphin" ]; then
   echo "Configured Dolphin executable was not found: $dolphin" >&2
   exit 1
 fi
 
 mkdir -p "$test_user_dir/GC" "$test_user_dir/Wii"
+prepare_test_cards
+
+if [ -z "$platform" ]; then
+  echo "Configured Dolphin test cards in $test_user_dir/GC/GCMM-EX."
+  exit 0
+fi
 
 if [[ "$dolphin" == *.exe ]]; then
-  if ! command -v wslpath >/dev/null 2>&1; then
-    echo "Windows Dolphin requires WSL path conversion. Set DOLPHIN to a native build." >&2
-    exit 1
-  fi
   exec "$dolphin" -u "$(wslpath -w "$test_user_dir")" -e "$(wslpath -w "$dol")"
 fi
 

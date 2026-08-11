@@ -61,13 +61,13 @@ more than one USB storage device in Wii mode.
 ### Wii — Homebrew Channel
 
 1. Create `apps/gcmm` on an SD card or USB device.
-2. Copy `releases/gcmm_WII.dol` to that directory as `boot.dol`.
+2. Copy `releases/gcmm_ex_WII.dol` to that directory as `boot.dol`.
 3. Copy `hbc/meta.xml` and `hbc/icon.png` to the same directory.
 4. Start GCMM-EX from the Homebrew Channel.
 
 ### GameCube
 
-Run `releases/gcmm_GC.dol` from a compatible loader, such as Swiss or SDLoad.
+Run `releases/gcmm_ex_GC.dol` from a compatible loader, such as Swiss or SDLoad.
 
 ## Controls
 
@@ -100,7 +100,8 @@ are under **Settings → Advanced options**.
 ### Configure the toolchain
 
 Install this public toolchain on the host. GCMM-EX requires devkitPPC,
-libogc2, libdvm, PowerPC FreeType, and zlib.
+libogc2, libdvm, PowerPC FreeType, zlib, and Python 3 for DOL section
+alignment.
 
 1. Install devkitPro pacman and the GameCube/Wii development groups by
    following the official [devkitPPC getting-started guide](https://devkitpro.org/wiki/Getting_Started/devkitPPC).
@@ -154,8 +155,8 @@ libraries for the PowerPC target libraries.
 
 | Target | DOL output |
 | --- | --- |
-| GameCube | `releases/gcmm_GC.dol` |
-| Wii | `releases/gcmm_WII.dol` |
+| GameCube | `releases/gcmm_ex_GC.dol` |
+| Wii | `releases/gcmm_ex_WII.dol` |
 
 Intermediate objects use `build_GC/` and `build_WII/`. Build outputs are
 generated files and are not versioned.
@@ -171,8 +172,12 @@ scripts/run-dolphin.sh --wii
 ```
 
 Set `DOLPHIN` in `.env` when the executable is not on `PATH`. Windows Dolphin
-paths work under WSL. Configure virtual cards and controllers before testing;
-see [tests/dolphin/README.md](tests/dolphin/README.md) for the checklist and
+paths work under WSL. The launcher configures an isolated test profile: Slot A
+uses the GCI files in `memorycards/`, and Slot B uses its RAW image. Both are
+copied to `tests/dolphin/user/GC/GCMM-EX/` on first use, so test writes do not
+alter the source files. Run `scripts/run-dolphin.sh --setup` to prepare only
+the profile. Configure controllers before testing; see
+[tests/dolphin/README.md](tests/dolphin/README.md) for the checklist and
 emulator limitations.
 
 ## Repository layout
