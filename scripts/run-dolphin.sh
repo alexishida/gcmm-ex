@@ -77,8 +77,11 @@ set_ini_value() {
 
 prepare_test_cards() {
   local config="$test_user_dir/Config/Dolphin.ini"
-  local card_a_dir="$test_user_dir/GC/GCMM-EX/Card A"
-  local card_b_raw="$test_user_dir/GC/GCMM-EX/Card B.raw"
+  # Dolphin resolves custom card paths to region-specific names. Keep the
+  # expected USA suffix so it opens the seeded test cards, not empty cards it
+  # creates for the region at launch.
+  local card_a_dir="$test_user_dir/GC/GCMM-EX/Test Card A/USA"
+  local card_b_raw="$test_user_dir/GC/GCMM-EX/Test Card B.USA.raw"
   local gci_files=()
   local raw_files=()
   local config_card_a_dir=$card_a_dir

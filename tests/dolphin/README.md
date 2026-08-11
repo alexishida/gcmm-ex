@@ -3,11 +3,13 @@
 `scripts/run-dolphin.sh` launches GCMM-EX with a test-only Dolphin user directory at `tests/dolphin/user/`. That directory is ignored by Git, so emulator settings, screenshots, save states, and virtual memory cards cannot modify a developer's normal Dolphin profile or enter the repository.
 
 On first use, the launcher copies the `*.gci` files from the ignored
-`memorycards/` directory to `tests/dolphin/user/GC/GCMM-EX/Card A/` and its
-first `*.raw` image to `Card B.raw`. It configures Dolphin Slot A as a GCI
-Folder and Slot B as a raw Memory Card. The source files remain unchanged;
-delete the corresponding files in the isolated test profile only when a fresh
-copy is wanted.
+`memorycards/` directory to
+`tests/dolphin/user/GC/GCMM-EX/Test Card A/USA/` and its first `*.raw` image
+to `Test Card B.USA.raw`. It configures Dolphin Slot A as a GCI Folder and
+Slot B as a raw Memory Card. These explicit USA-region names match files
+Dolphin opens, so test inputs are not replaced by empty regional cards. Source
+files remain unchanged; delete corresponding files in isolated test profile
+only when a fresh copy is wanted.
 
 Build first, then launch either platform:
 

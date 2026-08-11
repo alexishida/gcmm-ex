@@ -49,6 +49,10 @@ meaning, dates, and contributor credits.
 
 ### Fixed
 
+- Fixed Dolphin smoke-test card paths to use the USA-region names Dolphin
+  resolves at runtime, ensuring isolated cards are seeded from `memorycards/`
+  rather than replaced with empty cards.
+
 - Fixed the Dolphin test-profile writer on Windows-style INI files so repeated
   launches no longer create duplicate Core sections.
 - Aligned generated DOL load sections to 32 bytes for strict loaders, including

@@ -174,9 +174,10 @@ scripts/run-dolphin.sh --wii
 Set `DOLPHIN` in `.env` when the executable is not on `PATH`. Windows Dolphin
 paths work under WSL. The launcher configures an isolated test profile: Slot A
 uses the GCI files in `memorycards/`, and Slot B uses its RAW image. Both are
-copied to `tests/dolphin/user/GC/GCMM-EX/` on first use, so test writes do not
-alter the source files. Run `scripts/run-dolphin.sh --setup` to prepare only
-the profile. Configure controllers before testing; see
+copied on first use to Dolphin's USA-region test-card paths under
+`tests/dolphin/user/GC/GCMM-EX/`, so test writes do not alter the source files.
+Run `scripts/run-dolphin.sh --setup` to prepare only the profile. Configure
+controllers before testing; see
 [tests/dolphin/README.md](tests/dolphin/README.md) for the checklist and
 emulator limitations.
 
