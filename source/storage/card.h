@@ -27,6 +27,13 @@ distribution.
 
 -------------------------------------------------------------*/
 
+/**
+ * @file card.h
+ * @brief Extra CARD declarations required by GCMM's local compatibility driver.
+ *
+ * The legacy include guard is retained for compatibility with libogc versions
+ * that expect it. Only declarations absent from those versions live here.
+ */
 #ifndef __CARD_H__
 #define __CARD_H__
 

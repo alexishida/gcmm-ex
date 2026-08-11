@@ -5,6 +5,13 @@
 * These functions are generic, and do not contain any Memory Card specific
 * routines.
 ****************************************************************************/
+/**
+ * @file freetype.c
+ * @brief FreeType text renderer and low-level framebuffer drawing helpers.
+ *
+ * Rasterizes bundled TrueType font directly into active linear framebuffer.
+ * Independent of save and storage workflows.
+ */
 #include <gccore.h>
 #include <ogcsys.h>
 #include <stdio.h>

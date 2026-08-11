@@ -6,6 +6,13 @@
 *
 * softdev March 2007
 ***************************************************************************/
+/**
+ * @file sidestep.c
+ * @brief GameCube-only DOL handoff through auxiliary RAM.
+ *
+ * Runs a DOL from ARAM so program memory can be safely overwritten after
+ * handoff begins. This low-level code must remain isolated from Wii builds.
+ */
 #include <gccore.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,3 +1,11 @@
+/**
+ * @file raw.c
+ * @brief Full-card RAW backup, validation, and restoration.
+ *
+ * RAW images include card system data and every allocation block. Restoration
+ * checks header, capacity, and Flash ID before writes because an invalid target
+ * can permanently corrupt a memory card.
+ */
 #include <gccore.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -208,7 +216,7 @@ u64 Card_SerialNo(s32 slot)
 }
 
 //output is 29 char long
-void time2name(char *name)
+static void time2name(char *name)
 {
 	int month, day, year, hour, min, sec;
 	month = day = year = hour = min = sec = 0;

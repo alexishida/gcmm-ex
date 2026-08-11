@@ -1,6 +1,14 @@
 /****************************************************************************
  * SD Card Support Functions
  ****************************************************************************/
+/**
+ * @file sdsupp.c
+ * @brief Save-image file I/O on the selected mounted storage device.
+ *
+ * Historical SD names apply to every supported mounted device. Directory names
+ * are treated as untrusted, file ranges are bounded, and GCI/GCS/SAV inputs
+ * are normalized into FileBuffer before card writes.
+ */
 #include <gccore.h>
 #include <network.h>
 #include <stdio.h>
@@ -726,7 +734,7 @@ int isdir_sd(char *path)
 }
 
 //Code from Kobie. Returns true if extension matches (also works with paths), should check only the last '.' in the string.
-bool compare_extension(char *filename, char *extension)
+static bool compare_extension(char *filename, char *extension)
 {
     /* Sanity checks */
 

@@ -10,7 +10,7 @@ if [ -f "$project_root/.env" ]; then
   set +a
 fi
 platform=${1:---gc}
-test_user_dir=${DOLPHIN_USER_DIR:-"$project_root/test/dolphin/user"}
+test_user_dir=${DOLPHIN_USER_DIR:-"$project_root/tests/dolphin/user"}
 
 case "$platform" in
   --gc)

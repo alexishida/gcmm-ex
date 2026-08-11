@@ -1,179 +1,169 @@
 # GCMM-EX
 
-A Nintendo GameCube memory card manager for GameCube and Wii.
+GCMM-EX is a GameCube memory-card manager for Nintendo GameCube and Wii.
 
-Current application metadata: **GCMM-EX 2.0** by **Alex Ishida**.
+**Current version:** 1.0
 
-> [!IMPORTANT]
-> GCMM-EX is based on [GCMM, created and maintained by suloku](https://github.com/suloku/gcmm). It preserves that project's contributions while providing a redesigned, modernized application for current toolchains, storage devices, filesystems, and new features.
+It backs up, restores, copies, moves, and removes GameCube saves while
+preserving the compatibility requirements of real console hardware.
 
-## About
+> [!WARNING]
+> Formatting a card and restoring a complete card image are destructive. Keep
+> a verified backup, confirm the source and destination, and never remove a
+> memory card or storage device while an operation is running.
 
-GCMM-EX (*GameCube/Wii Memory Manager Extended*) is a homebrew application for backing up, restoring, deleting, and managing Nintendo GameCube save data. It runs on both Nintendo GameCube and Nintendo Wii hardware.
+## What it does
 
-GCMM was started by dsbomb and justb, based on Askot's SD support modification for the libogc `mcbackup` example. Suloku later updated and expanded GCMM, ported it to Wii, and fixed critical save restoration behavior.
+- Manage saves on either GameCube memory-card slot.
+- Back up saves as GCI files and restore GCI, GCS, and SAV files.
+- Copy or move saves between cards. A move verifies the copied payload before
+  deletion of the source save.
+- Create complete memory-card RAW backups and restore RAW, GCP, or MCI images.
+- Show save details, banners, and animated icons.
+- Format a memory card only after an explicit destructive confirmation.
+- Select supported storage without restarting the application.
+- Use GameCube controllers, Wii Remotes, or Wii Classic Controllers where
+  supported by the platform.
 
-GCMM-EX builds on that foundation with the following goals:
+Protected saves, including F-Zero GX and Phantasy Star Online saves, retain the
+serial and checksum handling required for restoration to another card.
 
-- Keep GCMM-EX buildable with newer tools and libraries.
-- Improve compatibility with current storage devices and filesystems.
-- Fix remaining issues from GCMM.
-- Modernize the code without dropping GameCube or Wii support.
-- Make maintenance, testing, and community contributions easier.
+## Supported platforms, storage, and filesystems
 
-## Features
-
-- Back up and restore save data in GCI format.
-- Restore save data in GCS and SAV formats.
-- Delete save data from a memory card.
-- Back up a complete memory card as a RAW image.
-- Restore RAW, GCP, and MCI memory card images.
-- Format memory cards.
-- Display save details, banners, and animated icons.
-- Support Wii Remotes and GameCube controllers.
-- Support console power buttons.
-- Provide one consistent visual theme.
-- Select and swap storage devices without restarting GCMM-EX.
-- Accept command-line parameters on Wii and GameCube.
-- Support FAT16, FAT32, and exFAT storage.
-
-### Supported storage devices
-
-| Platform | Devices |
+| Platform | Supported storage |
 | --- | --- |
-| Wii | Front SD, USB, and SD Gecko in slots A or B |
-| GameCube | SD2SP2, SD Gecko in slots A or B, and GC Loader |
+| Wii | Front SD, USB, SD Gecko in Slot A, SD Gecko in Slot B |
+| GameCube | SD2SP2, SD Gecko in Slot A, SD Gecko in Slot B, GC Loader |
 
-GCMM-EX shows its home screen before storage selection. Use **Settings → Storage devices** to choose or change storage. Avoid connecting more than one USB storage device in Wii mode.
+The storage layer supports FAT12, FAT16, FAT32, and exFAT through libdvm.
+FAT32 remains the most broadly compatible option for homebrew use.
 
-## Installation and usage
+GCMM-EX selects storage from **Settings → Storage devices**. After changing a
+device, return to that screen to detect and mount it again. Avoid connecting
+more than one USB storage device in Wii mode.
+
+## Installation
 
 ### Wii — Homebrew Channel
 
-1. Create an `apps/gcmm` directory on the SD card or USB device.
-2. Copy `releases/gcmm_WII.dol` into that directory and rename it to `boot.dol`.
-3. Copy `hbc/meta.xml` and `hbc/icon.png` into the same directory.
+1. Create `apps/gcmm` on an SD card or USB device.
+2. Copy `releases/gcmm_WII.dol` to that directory as `boot.dol`.
+3. Copy `hbc/meta.xml` and `hbc/icon.png` to the same directory.
 4. Start GCMM-EX from the Homebrew Channel.
 
 ### GameCube
 
-Run `releases/gcmm_GC.dol` through a compatible homebrew loader such as Swiss or SDLoad.
+Run `releases/gcmm_GC.dol` from a compatible loader, such as Swiss or SDLoad.
 
-## Navigation and controls
+## Controls
 
-GCMM-EX opens on a task-oriented home screen showing detected memory cards and
-mounted storage. Choose **Manage saves**, **Back up memory card**, **Restore
-backup**, or **Settings** before choosing a specific operation.
-
-| Purpose | GameCube controller | Wii Remote / Classic Controller |
+| Action | GameCube controller | Wii Remote / Classic Controller |
 | --- | --- | --- |
 | Navigate | D-pad or analog stick | D-pad |
-| Select / confirm | `A` | `A` |
-| Back / cancel | `B` | `B` |
+| Select or confirm | `A` | `A` |
+| Back or cancel | `B` | `B` |
 | Save actions | `X` | `+` / Classic `X` |
 | Mark saves | `Y` | `-` / Classic `Y` |
-| Change device | `L` / `R` | `1` / `2` |
-| Help | `Start` | `HOME` |
+| Previous or next storage device | `L` / `R` | `1` / `2` |
+| Help | `Start` | `HOME` / Classic `+` |
 
-RAW backup, RAW restore, and memory-card formatting are available only from
-**Settings → Advanced options** and retain explicit destructive confirmations.
+The home screen provides **Manage saves**, **Back up memory card**, **Restore
+backup**, and **Settings**. Complete-card backup, restoration, and formatting
+are under **Settings → Advanced options**.
 
-## Memory card and save data safety
+## Save-data safety
 
-> [!WARNING]
-> RAW restoration and formatting overwrite memory card data. Keep a verified backup before using either operation. Never remove a memory card or storage device while GCMM-EX is reading or writing data.
+- A RAW image is a complete memory-card copy. Restore it only to its original
+  card unless you understand the compatibility and data-loss risks.
+- RAW restoration validates image type, size, header, card capacity, and Flash
+  ID before writing. Keep `FLASHIDCHECK` enabled.
+- GCI backup files are size-verified after writing to storage.
+- Never swap memory cards or storage media while an operation is in progress.
+- Use disposable virtual cards for destructive emulator tests.
 
-- A RAW image is a complete copy of a memory card and should generally be restored only to its source card.
-- Unofficial cards may share the same Flash ID. This can allow RAW restoration between same-sized unofficial cards, but it should be done with caution.
-- Permission-protected saves can be backed up and restored by GCMM-EX.
-- Since GCMM 1.3, serial-protected saves from games such as F-Zero and Phantasy Star Online are patched during restoration for use on the target card.
-- Insert or remove memory cards only from the home screen or Settings storage screen.
-- After changing SD or USB storage, use **Settings → Storage devices** to detect
-  and mount it again. Canceling or a failed switch restores the previous mount
-  when possible.
+## Build from source
 
-FAT32 remains the most broadly compatible option in the GameCube and Wii homebrew ecosystem. exFAT is mainly useful for large cards that are already formatted with that filesystem.
+### Required toolchain
 
-## Building from source
+Builds use the local `retrodev/gcwii` Docker image. It provides devkitPPC,
+libogc2, libdvm, PowerPC FreeType, and zlib. The compiler does not run directly
+on the host.
 
-### Dependencies
-
-- [devkitPPC/devkitPro](https://devkitpro.org/)
-- [libogc2](https://github.com/extremscorner/libogc2)
-- [libdvm](https://github.com/extremscorner/libdvm)
-- FreeType for PowerPC (`ppc-freetype`)
-- zlib
-
-GCMM-EX uses libdvm instead of libfat for partition detection and FAT12, FAT16, FAT32, and exFAT support. The library is still linked as `-lfat`, but `libogc2-libdvm` is required; `libogc2-libfat` is not compatible with this configuration.
-
-Set the devkitPro environment variables before building:
+The local `.env` file configures the retrodev wrapper and Dolphin path. It is
+intentionally ignored by Git. The configured image lives under
+`/home/alexishida/retrodev`.
 
 ```sh
-export DEVKITPRO=/opt/devkitpro
-export DEVKITPPC="$DEVKITPRO/devkitPPC"
+source .env
+"$RETRO_BIN" "$RETRO_PLATFORM" make       # Build GameCube and Wii
+"$RETRO_BIN" "$RETRO_PLATFORM" make gc    # GameCube only
+"$RETRO_BIN" "$RETRO_PLATFORM" make wii   # Wii only
+"$RETRO_BIN" "$RETRO_PLATFORM" make clean # Remove generated outputs
 ```
 
-### Build commands
+If the Docker image is not available locally, build it first:
 
 ```sh
-make       # Build GameCube and Wii versions
-make gc    # Build GameCube version only
-make wii   # Build Wii version only
-make clean # Remove build artifacts
+source .env
+"$RETRO_BIN" build "$RETRO_PLATFORM"
 ```
 
-Final DOL and ELF files are written to the root-level `releases/` directory. Each platform has its own intermediate directory.
+Do not run `make`, `make gc`, or `make wii` directly on the host. Inside the
+container, `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS`, and `freetype-config` are set
+for the Makefiles.
 
-| Command | Main DOL output |
+| Target | DOL output |
 | --- | --- |
-| `make gc` | `releases/gcmm_GC.dol` |
-| `make wii` | `releases/gcmm_WII.dol` |
+| GameCube | `releases/gcmm_GC.dol` |
+| Wii | `releases/gcmm_WII.dol` |
 
-Current toolchains may provide FreeType only through `pkg-config`, while these Makefiles still call `freetype-config`. Updating that integration remains part of GCMM-EX modernization work.
+Intermediate objects use `build_GC/` and `build_WII/`. Build outputs are
+generated files and are not versioned.
 
-### Dolphin smoke testing
+## Dolphin smoke testing
 
-The repository includes a launcher for testing built DOLs in Dolphin without
-changing your normal emulator profile. It creates an isolated user directory at
-`test/dolphin/user/`, which is ignored by Git.
+The launcher uses an isolated Dolphin user directory at
+`tests/dolphin/user/`, which is ignored by Git.
 
 ```sh
-scripts/run-dolphin.sh --gc    # Launch releases/gcmm_GC.dol
-scripts/run-dolphin.sh --wii   # Launch releases/gcmm_WII.dol
+scripts/run-dolphin.sh --gc
+scripts/run-dolphin.sh --wii
 ```
 
-Set `DOLPHIN=/path/to/dolphin-emu` when Dolphin is not on `PATH`, or set it in
-the local `.env` file. The launcher supports Windows paths when running under
-WSL. Configure virtual memory cards and controllers in Dolphin before
-testing. Use only disposable virtual media for copy, move, delete, restore,
-RAW restore, or format tests. See [`test/dolphin/README.md`](test/dolphin/README.md)
-for the smoke-test checklist and emulator limitations.
+Set `DOLPHIN` in `.env` when the executable is not on `PATH`. Windows Dolphin
+paths work under WSL. Configure virtual cards and controllers before testing;
+see [tests/dolphin/README.md](tests/dolphin/README.md) for the checklist and
+emulator limitations.
 
 ## Repository layout
 
 ```text
-source/          Shared source code
-source/aram/     GameCube loader support
-data/            Shared assets
-data-gc/         GameCube visual assets
-data-wii/        Wii visual assets
-hbc/             Homebrew Channel metadata and icon
-releases/        Final DOL and ELF build outputs
-build_GC*/       GameCube intermediate build files
-build_WII*/      Wii intermediate build files
-Makefile.gc      GameCube build configuration
-Makefile.wii     Wii build configuration
-changelog.md     Project release history
+source/              Application entry point and shared code
+source/ui/           Controller UI, font, bitmap, banner, and icon rendering
+source/storage/      CARD driver, save files, storage, and RAW-image handling
+source/aram/         GameCube-only auxiliary-RAM DOL loader
+data/                Shared assets
+data-gc/             GameCube-specific assets
+data-wii/            Wii-specific assets
+hbc/                 Homebrew Channel metadata and icon
+scripts/             Development and emulator helpers
+tests/dolphin/       Dolphin smoke-test documentation and local test data
+releases/            Generated DOL and ELF outputs
+Makefile.gc          GameCube build configuration
+Makefile.wii         Wii build configuration
 ```
 
-## History and credits
+See [source/README.md](source/README.md) for source-module boundaries, shared
+buffer ownership, binary-format constraints, and contributor guidance.
 
-See [`changelog.md`](changelog.md) for the normalized release history.
+## Credits and license
 
-GCMM-EX is based on GCMM. Full credit for the GCMM foundation goes to suloku, dsbomb, justb, Askot, and every historical contributor. Special thanks to suloku, dsbomb, justb, Askot, SoftDev, Costis, Masken, CowTRobo, Samsom, Tantric, tueidj, dronesplitter, PabloACZ, Pikachu025, Nano/Excelsiior, bm123456, themanuel, DacoTaco, Extrems, fincs, ChaN, dragonbane0, Zephiles, Ralf, and f3bandit.
+GCMM-EX is based on [GCMM by suloku](https://github.com/suloku/gcmm), which was
+started by dsbomb and justb from Askot's libogc `mcbackup` work. It preserves
+the contributions of suloku, dsbomb, justb, Askot, SoftDev, Costis, Masken,
+CowTRobo, Samsom, Tantric, tueidj, dronesplitter, PabloACZ, Pikachu025,
+Nano/Excelsiior, bm123456, themanuel, DacoTaco, Extrems, fincs, ChaN,
+dragonbane0, Zephiles, Ralf, f3bandit, and other contributors.
 
-Visit the [GCMM repository](https://github.com/suloku/gcmm) for authorship, historical context, and earlier releases.
-
-## License
-
-Distributed under the [GNU General Public License v3.0](COPYING). GCMM-EX preserves the credits and rights of GCMM's authors and contributors.
+See [changelog.md](changelog.md) for release history. GCMM-EX is distributed
+under the [GNU General Public License v3.0](COPYING).

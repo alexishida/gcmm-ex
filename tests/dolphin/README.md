@@ -1,6 +1,6 @@
 # Dolphin smoke-test environment
 
-`scripts/run-dolphin.sh` launches GCMM-EX with a test-only Dolphin user directory at `test/dolphin/user/`. That directory is ignored by Git, so emulator settings, screenshots, save states, and virtual memory cards cannot modify a developer's normal Dolphin profile or enter the repository.
+`scripts/run-dolphin.sh` launches GCMM-EX with a test-only Dolphin user directory at `tests/dolphin/user/`. That directory is ignored by Git, so emulator settings, screenshots, save states, and virtual memory cards cannot modify a developer's normal Dolphin profile or enter the repository.
 
 Build first, then launch either platform:
 

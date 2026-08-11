@@ -7,6 +7,6 @@
 /releases/
 .env.md
 .env
-test/dolphin/user/
+tests/dolphin/user/
 *.elf
 *.dol

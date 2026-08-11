@@ -16,12 +16,17 @@ GCMM-EX is based on [suloku's GCMM](https://github.com/suloku/gcmm), with a rede
 
 ### Changed
 
+- Set the GCMM-EX application version to 1.0.
 - Renamed the application to GCMM-EX and credited Alex Ishida as author.
 - Replaced libfat with Extrems' libdvm, which bundles FatFs and supports FAT12, FAT16, FAT32, and exFAT. libdvm is now a build requirement.
 - Changed device mounting to probe partition tables and select the matching filesystem driver instead of assuming FAT. Devices whose first partition is unsupported or uses another filesystem can now be handled correctly.
 - Changed final build output paths. DOL and ELF files are now written to the root-level `releases/` directory.
 - Simplified builds to one visual theme and one output per platform; removed legacy themed build variants and background inputs.
 - Rewrote the main README in U.S. English and documented the current build output layout.
+- Organized shared code into dedicated `source/ui/` and `source/storage/`
+  modules, and moved Dolphin smoke-test files under `tests/dolphin/`.
+- Documented source-module boundaries, shared buffer ownership, binary-format
+  constraints, and public function contracts in U.S. English.
 - Replaced normal-operation shortcut dispatch with consistent navigation:
   D-pad/analog navigation, A confirmation, B cancellation, X actions, Y
   marking, L/R device changes, and Start/HOME help.

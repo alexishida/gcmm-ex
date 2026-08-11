@@ -9,6 +9,13 @@
  *
  * This example decodes a BMP file onto the linear framebuffer.
  ****************************************************************************/
+/**
+ * @file bitmap.c
+ * @brief Linear-framebuffer BMP, banner, and icon rendering.
+ *
+ * BMP inputs must be 24-bit, uncompressed, and fit active video mode. Save
+ * previews are already decoded by bannerload.c and use the same framebuffer.
+ */
 #include <gccore.h>
 #include <ogcsys.h>
 #include <stdio.h>
@@ -35,7 +42,7 @@ extern card_direntry gci;
  *	FLIP16		Convert little to big endian shorts.
  *	CvtRGB		Convert RGB pixels to Y1CbY2Cr.
  ****************************************************************************/
-u32 FLIP32(u32 value) {
+static u32 FLIP32(u32 value) {
     u32 b;
 
     b = (value & 0xff) << 24;
@@ -46,7 +53,7 @@ u32 FLIP32(u32 value) {
     return b;
 }
 
-u16 FLIP16(u16 value) {
+static u16 FLIP16(u16 value) {
     return ((value & 0x00ff) << 8) | ((value & 0xff00) >> 8);
 }
 

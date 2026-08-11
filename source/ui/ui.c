@@ -4,6 +4,13 @@
  * Keeps navigation and controls consistent across every workflow. Drawing is
  * intentionally simple and overscan-safe for 480i/576i displays.
  ****************************************************************************/
+/**
+ * @file ui.c
+ * @brief Task-oriented UI rendering and controller input state machine.
+ *
+ * UI owns controller loops and visual consistency. Workflow code receives only
+ * user intent and keeps responsibility for card and storage side effects.
+ */
 #include <gccore.h>
 #include <stdio.h>
 #include <string.h>

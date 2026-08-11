@@ -25,9 +25,9 @@ DKV		:= $(or $(DKV),0)
 TARGET		:=	gcmm_WII
 BUILD		:=	build_WII
 
-SOURCES		:=	source
+SOURCES		:=	source source/ui source/storage
 DATA		:=	data data-wii
-INCLUDES	:=
+INCLUDES	:=	source source/ui source/storage
 
 #---------------------------------------------------------------------------------
 # options for code generation

@@ -27,6 +27,14 @@ distribution.
 
 -------------------------------------------------------------*/
 
+/**
+ * @file card.c
+ * @brief Local libogc-compatible CARD driver for legacy libogc2 versions.
+ *
+ * This is a compatibility-sensitive low-level implementation. Keep it
+ * separate from mcard.c: callers should use high-level save APIs there. CARD
+ * protocol changes require validation on real GameCube and Wii hardware.
+ */
 #include <ogc/libversion.h>
 #if (_V_MAJOR_ <= 2) && (_V_MINOR_ <= 2)
 

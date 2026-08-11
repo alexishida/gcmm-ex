@@ -18,6 +18,15 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Preservar as duas variantes oficiais e seus diretórios intermediários separados:
   - GameCube: `make gc` -> `releases/gcmm_GC.dol`.
   - Wii: `make wii` -> `releases/gcmm_WII.dol`.
+- O toolchain local é fornecido pela imagem Docker `retrodev/gcwii`, instalada
+  em `/home/alexishida/retrodev`; ele não existe diretamente no host.
+- Antes de compilar, carregar `.env` e usar o wrapper configurado:
+  - GameCube: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make gc`.
+  - Wii: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make wii`.
+  - Ambos: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make`.
+- Não executar `make gc` ou `make wii` diretamente no host. Esses comandos só
+  são válidos dentro do container, onde `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS` e
+  `freetype-config` estão disponíveis.
 - Não versionar artefatos gerados em `build_GC*`, `build_WII*` ou `releases/`.
 - A biblioteca de filesystem continua vinculada como `-lfat`, mas deve ser fornecida por `libogc2-libdvm`. Não substituir por `libogc2-libfat`, pois isso remove a configuração atual de detecção de partições e exFAT.
 
@@ -34,7 +43,6 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Preservar a montagem por `libdvm`, a detecção do filesystem por partição, a escolha do primeiro volume suportado e a desmontagem de todos os volumes montados pelo dispositivo.
 
 ## Regras de código
-- Algumas configurações estão em /.env.md
 - Escrever código claro, organizado e de fácil manutenção, respeitando a arquitetura e o estilo legado do arquivo alterado.
 - Preferir mudanças pequenas e localizadas. Não introduzir dependências, abstrações ou reescritas amplas sem necessidade comprovada.
 - Tratar limites de buffer, tamanhos de arquivo, alinhamento e retorno de APIs explicitamente. Hardware alvo possui memória limitada; o GameCube dispõe de 24 MB de MEM1 e o projeto já mantém um buffer de arquivos de 2 MB.
@@ -73,7 +81,8 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 
 ## Validação
 
-- Compilar todas as variantes afetadas. Para mudanças compartilhadas, validar `make gc` e `make wii`.
+- Compilar todas as variantes afetadas pelo wrapper Docker definido em `.env`.
+  Para mudanças compartilhadas, validar os alvos GameCube e Wii.
 - Para mudanças exclusivas de plataforma, validar ao menos todas as variantes que usam o trecho ou asset alterado.
 - Executar `make clean` antes de uma validação final quando houver risco de objetos ou assets obsoletos.
 - Não afirmar que uma build ou teste passou sem executar o comando correspondente. Se o toolchain ou hardware não estiver disponível, registrar claramente a limitação.

@@ -6,6 +6,10 @@
 *
 * softdev March 2007
 ***************************************************************************/
+/**
+ * @file sidestep.h
+ * @brief GameCube-only interface for loading a DOL through auxiliary RAM.
+ */
 #ifndef HW_RVL
 #ifndef __SIDESTEP__
 #define __SIDESTEP__
@@ -33,6 +37,7 @@ typedef struct {
     unsigned int unused[MAXTEXTSECTION];
 } DOLHEADER;
 
+/** Transfer and execute a valid DOL image from ARAM. Returns zero on success. */
 int DOLtoARAM(unsigned char *dol, int argc, char *argv[]);
 
 #endif

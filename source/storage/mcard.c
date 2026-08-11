@@ -11,6 +11,15 @@
 *  64   - Copy of CardStatus
 * 192   - Memory Card File Data
 ****************************************************************************/
+/**
+ * @file mcard.c
+ * @brief High-level GameCube memory-card save management.
+ *
+ * FileBuffer is a 2 MiB aligned shared buffer. A loaded save starts with a
+ * 64-byte GCI directory entry followed by a block-aligned payload. Keep size
+ * and alignment unchanged: GameCube memory is constrained and CARD uses DMA.
+ * Each operation mounts a card only while needed, then unmounts before return.
+ */
 #include <gccore.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,7 +112,7 @@ s32 PSO_MakeSaveGameValid(s32 chn);
 /*---------------------------------------------------------------------------------
 	This function is called if a card is physically removed
 ---------------------------------------------------------------------------------*/
-void card_removed(s32 chn,s32 result)
+static void card_removed(s32 chn,s32 result)
 {
 	if (chn == CARD_SLOTA){
 		//printf("Card was removed from slot A");

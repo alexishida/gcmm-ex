@@ -1,3 +1,11 @@
+/**
+ * @file bannerload.c
+ * @brief Convert GameCube save banners and icons to preview bitmaps.
+ *
+ * Texture layout and RGB5A3 decoding derive from Dolphin's historical
+ * BannerLoaderGC, ColorUtil, and TextureDecoder implementations. Output uses
+ * BGR pixel bytes consumed by bitmap.c's framebuffer renderer.
+ */
 #include <gccore.h>
 #include <ogcsys.h>
 #include <stdio.h>
@@ -17,19 +25,19 @@
 	(http://dolphin-emu.googlecode.com/svn/trunk/)
 ***/
 
-u8 convert5to8(u16 v) {
+static u8 convert5to8(u16 v) {
 	return (v<<3)|(v>>2);
 }
 
-u8 convert3to8(u16 v) {
+static u8 convert3to8(u16 v) {
 	return (v<<5)|(v<<2)|(v>>1);
 }
 
-u8 convert4to8(u16 v) {
+static u8 convert4to8(u16 v) {
 	return (v<<4)|v;
 }
 
-u32 Decode5A3(u16 val, int row) {
+static u32 Decode5A3(u16 val, int row) {
 	static u32 bg_color = 0x00000000;
 
 	// The decoder expects the banner/icon preview to use the matching

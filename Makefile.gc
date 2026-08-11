@@ -25,9 +25,9 @@ DKV		:= $(or $(DKV),0)
 TARGET		:=	gcmm_GC
 BUILD		:=	build_GC
 
-SOURCES		:=	source source/aram
+SOURCES		:=	source source/ui source/storage source/aram
 DATA		:=	data data-gc
-INCLUDES	:=
+INCLUDES	:=	source source/ui source/storage
 
 #---------------------------------------------------------------------------------
 # options for code generation

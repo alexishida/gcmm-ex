@@ -8,6 +8,14 @@
 * Uses freetype.
 * libFreeType is available from the downloads sections.
 *****************************************************************************/
+/**
+ * @file main.c
+ * @brief Application startup, device lifecycle, and user workflow orchestration.
+ *
+ * Coordinates UI, mounted storage, and memory-card subsystems. File-format
+ * parsing and card-driver details remain in storage/. Every workflow must
+ * preserve source data after a failed copy, move, backup, or restore.
+ */
 #include <gccore.h>
 #include <ogcsys.h>
 #include <network.h>
@@ -58,7 +66,7 @@ char fatpath[8];
      can be unmounted again ***/
 static char fatbase[8];
 
-const char appversion[] = "v1.5.2";
+const char appversion[] = "v1.0";
 
 /* Legacy I/O workflows retained while their task screens are migrated. */
 void SD_RawBackupMode(void);

@@ -2,6 +2,13 @@
 * SSARAM
 ***************************************************************************/
 #ifndef HW_RVL
+/**
+ * @file ssaram.c
+ * @brief GameCube-only aligned DMA helpers for auxiliary RAM.
+ *
+ * ARAM transfers require 32-byte alignment. ARAMPut repairs misaligned edges
+ * through a shared 2 KiB aligned scratch buffer, preserving nearby bytes.
+ */
 #include <gccore.h>
 #include <stdio.h>
 #include <stdlib.h>
