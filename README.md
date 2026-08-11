@@ -1,11 +1,25 @@
-# GCMM-EX
+<p align="center">
+  <img src="hbc/icon.png" alt="GCMM-EX logo" width="192" height="72">
+</p>
 
-GCMM-EX is a GameCube memory-card manager for Nintendo GameCube and Wii.
+GCMM-EX is a new GameCube memory-card manager for Nintendo GameCube and Wii.
 
 **Current version:** 1.0
 
 It backs up, restores, copies, moves, and removes GameCube saves while
 preserving the compatibility requirements of real console hardware.
+
+## A new project built on proven code
+
+GCMM-EX has a completely new interface, navigation model, visual design, and
+user workflow. It is not a cosmetic revision of the original application: the
+user-facing feature set and experience were redesigned for this project, with
+little of the original UI behavior remaining.
+
+The project deliberately reuses substantial low-level code from GCMM where it
+is required for GameCube memory-card compatibility, save formats, and hardware
+safety. That technical foundation does not reduce the originality of GCMM-EX's
+interface and product design, and all original authors remain credited below.
 
 > [!WARNING]
 > Formatting a card and restoring a complete card image are destructive. Keep
@@ -83,34 +97,60 @@ are under **Settings → Advanced options**.
 
 ## Build from source
 
-### Required toolchain
+### Configure the toolchain
 
-Builds use the local `retrodev/gcwii` Docker image. It provides devkitPPC,
-libogc2, libdvm, PowerPC FreeType, and zlib. The compiler does not run directly
-on the host.
+Install this public toolchain on the host. GCMM-EX requires devkitPPC,
+libogc2, libdvm, PowerPC FreeType, and zlib.
 
-The local `.env` file configures the retrodev wrapper and Dolphin path. It is
-intentionally ignored by Git. The configured image lives under
-`/home/alexishida/retrodev`.
+1. Install devkitPro pacman and the GameCube/Wii development groups by
+   following the official [devkitPPC getting-started guide](https://devkitpro.org/wiki/Getting_Started/devkitPPC).
+2. Install [libogc2](https://github.com/extremscorner/libogc2) using its
+   upstream installation instructions. When asked for the filesystem provider,
+   choose `libogc2-libdvm`, not `libogc2-libfat`; GCMM-EX requires libdvm for
+   partition probing and exFAT support.
+3. Install [libdvm](https://github.com/extremscorner/libdvm), PowerPC FreeType
+   (`ppc-freetype`), and zlib through the same package manager or their
+   upstream instructions.
+
+Do not build devkitPPC from source unless you are developing the toolchain
+itself. Use the package installation method documented by devkitPro.
+
+After installation, create a local `.env` file in the GCMM-EX root. Adjust
+`DEVKITPRO` only if your devkitPro installation uses a different location.
+`.env` is ignored by Git and must remain local to each developer.
+
+```sh
+DEVKITPRO="/opt/devkitpro"
+DEVKITPPC="$DEVKITPRO/devkitPPC"
+PORTLIBS="$DEVKITPRO/portlibs/ppc"
+PATH="$DEVKITPPC/bin:$DEVKITPRO/tools/bin:$PORTLIBS/bin:$PATH"
+
+# Optional: required only by scripts/run-dolphin.sh.
+# DOLPHIN="/path/to/dolphin-emu"
+```
+
+Verify that the installed toolchain exposes the required compiler and FreeType
+helper before building:
 
 ```sh
 source .env
-"$RETRO_BIN" "$RETRO_PLATFORM" make       # Build GameCube and Wii
-"$RETRO_BIN" "$RETRO_PLATFORM" make gc    # GameCube only
-"$RETRO_BIN" "$RETRO_PLATFORM" make wii   # Wii only
-"$RETRO_BIN" "$RETRO_PLATFORM" make clean # Remove generated outputs
+powerpc-eabi-gcc --version
+freetype-config --version
 ```
 
-If the Docker image is not available locally, build it first:
+### Build commands
 
 ```sh
 source .env
-"$RETRO_BIN" build "$RETRO_PLATFORM"
+make       # Build GameCube and Wii
+make gc    # GameCube only
+make wii   # Wii only
+make clean # Remove generated outputs
 ```
 
-Do not run `make`, `make gc`, or `make wii` directly on the host. Inside the
-container, `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS`, and `freetype-config` are set
-for the Makefiles.
+If `freetype-config` is missing, install the PowerPC FreeType port or follow
+its package documentation before building. Do not substitute host FreeType
+libraries for the PowerPC target libraries.
 
 | Target | DOL output |
 | --- | --- |
@@ -158,9 +198,10 @@ buffer ownership, binary-format constraints, and contributor guidance.
 
 ## Credits and license
 
-GCMM-EX is based on [GCMM by suloku](https://github.com/suloku/gcmm), which was
-started by dsbomb and justb from Askot's libogc `mcbackup` work. It preserves
-the contributions of suloku, dsbomb, justb, Askot, SoftDev, Costis, Masken,
+GCMM-EX reuses important technical code from
+[GCMM by suloku](https://github.com/suloku/gcmm), which was started by dsbomb
+and justb from Askot's libogc `mcbackup` work. It preserves the contributions
+of suloku, dsbomb, justb, Askot, SoftDev, Costis, Masken,
 CowTRobo, Samsom, Tantric, tueidj, dronesplitter, PabloACZ, Pikachu025,
 Nano/Excelsiior, bm123456, themanuel, DacoTaco, Extrems, fincs, ChaN,
 dragonbane0, Zephiles, Ralf, f3bandit, and other contributors.

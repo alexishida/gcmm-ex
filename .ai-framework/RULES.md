@@ -18,15 +18,15 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Preservar as duas variantes oficiais e seus diretórios intermediários separados:
   - GameCube: `make gc` -> `releases/gcmm_GC.dol`.
   - Wii: `make wii` -> `releases/gcmm_WII.dol`.
-- O toolchain local é fornecido pela imagem Docker `retrodev/gcwii`, instalada
-  em `/home/alexishida/retrodev`; ele não existe diretamente no host.
-- Antes de compilar, carregar `.env` e usar o wrapper configurado:
-  - GameCube: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make gc`.
-  - Wii: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make wii`.
-  - Ambos: `source .env && "$RETRO_BIN" "$RETRO_PLATFORM" make`.
-- Não executar `make gc` ou `make wii` diretamente no host. Esses comandos só
-  são válidos dentro do container, onde `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS` e
-  `freetype-config` estão disponíveis.
+- Configurar `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS` e o `PATH` no `.env` local
+  antes de compilar. A instalação padrão do devkitPro usa `/opt/devkitpro`.
+- Para toolchain instalada no host, compilar após `source .env`:
+  - GameCube: `make gc`.
+  - Wii: `make wii`.
+  - Ambas: `make`.
+- Um wrapper Docker local pode ser usado como alternativa de desenvolvimento,
+  mas documentação pública não deve depender de repositórios, caminhos ou
+  imagens privadas. Documentar sempre caminho público de instalação manual.
 - Não versionar artefatos gerados em `build_GC*`, `build_WII*` ou `releases/`.
 - A biblioteca de filesystem continua vinculada como `-lfat`, mas deve ser fornecida por `libogc2-libdvm`. Não substituir por `libogc2-libfat`, pois isso remove a configuração atual de detecção de partições e exFAT.
 
@@ -81,7 +81,7 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 
 ## Validação
 
-- Compilar todas as variantes afetadas pelo wrapper Docker definido em `.env`.
+- Compilar todas as variantes afetadas com o toolchain configurado em `.env`.
   Para mudanças compartilhadas, validar os alvos GameCube e Wii.
 - Para mudanças exclusivas de plataforma, validar ao menos todas as variantes que usam o trecho ou asset alterado.
 - Executar `make clean` antes de uma validação final quando houver risco de objetos ou assets obsoletos.
