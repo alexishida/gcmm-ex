@@ -31,10 +31,9 @@ u8 convert4to8(u16 v) {
 
 u32 Decode5A3(u16 val, int row) {
 	static u32 bg_color = 0x00000000;
-	
-	//the following code relies in DrawBoxFilledGradient() being called
-	//in showSaveInfo() in freetype.c to have these colors and being 37 pixel height (y2-y1 = 37)
-	//also, icon and banner must be displayed over it
+
+	// The decoder expects the banner/icon preview to use the matching
+	// 37-pixel gradient background before drawing translucent pixels.
 	//To do: get the actual color in the screen to make true alpha blending
 	int r3,g3,b3;
 	int r1 = (BLUECOL&0x0000FF) >> 0;	int g1 = (BLUECOL&0x00FF00) >> 8;	int b1 = (BLUECOL&0xFF0000) >> 16;

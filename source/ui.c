@@ -7,7 +7,6 @@
 #include <gccore.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #ifdef HW_RVL
 #include <wiiuse/wpad.h>
@@ -16,7 +15,10 @@
 #include "bitmap.h"
 #include "freetype.h"
 #include "ui.h"
+#include "ui_logo_bmp.h"
 
+/* Single GCMM-EX palette. Background artwork supplies UI_BACKGROUND. */
+#define UI_BACKGROUND  getcolour(3, 12, 30)
 #define UI_PANEL       getcolour(10, 20, 42)
 #define UI_PANEL_ALT   getcolour(18, 34, 62)
 #define UI_BORDER      getcolour(47, 92, 132)
@@ -24,7 +26,10 @@
 #define UI_SELECTED    getcolour(42, 76, 122)
 #define UI_TEXT        234, 242, 255
 #define UI_MUTED       153, 174, 204
-#define UI_DANGER      255, 116, 116
+#define UI_SUCCESS     getcolour(52, 181, 112)
+#define UI_WARNING     getcolour(220, 165, 53)
+#define UI_DESTRUCTIVE getcolour(186, 68, 78)
+#define UI_DISABLED    122, 139, 166
 #define UI_PAGE_SIZE   11
 
 typedef enum {
@@ -42,10 +47,17 @@ typedef enum {
 	UI_KEY_HELP
 } ui_key;
 
+static bool ui_destructive_confirmation;
+static const char *ui_transfer_source = "Not selected";
+static const char *ui_transfer_destination = "Not selected";
+
 #ifdef HW_RVL
 extern bool power;
 void PowerOff(void);
 #endif
+
+extern u32 retraceCount;
+extern const char appversion[];
 
 static void ui_wait_release(void)
 {
@@ -54,66 +66,20 @@ static void ui_wait_release(void)
 	       || WPAD_ButtonsHeld(0)
 #endif
 	) {
+#ifdef HW_RVL
+		if (power)
+			PowerOff();
+#endif
 		VIDEO_WaitVSync();
 	}
 }
 
-static ui_key ui_read_key(void)
+static ui_key ui_direction_from_masks(u32 pad
+#ifdef HW_RVL
+	, u32 remote
+#endif
+)
 {
-	static bool stick_latched = false;
-	u32 pad = PAD_ButtonsDown(0);
-	s8 stick_x = PAD_StickX(0);
-	s8 stick_y = PAD_StickY(0);
-#ifdef HW_RVL
-	u32 remote = WPAD_ButtonsDown(0);
-
-	if (power)
-		PowerOff();
-#endif
-
-	if (pad & PAD_BUTTON_A
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_A)
-#endif
-	)
-		return UI_KEY_CONFIRM;
-	if (pad & PAD_BUTTON_B
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_B)
-#endif
-	)
-		return UI_KEY_BACK;
-	if (pad & PAD_BUTTON_X
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_PLUS | WPAD_CLASSIC_BUTTON_X)
-#endif
-	)
-		return UI_KEY_CONTEXT;
-	if (pad & PAD_BUTTON_Y
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_Y)
-#endif
-	)
-		return UI_KEY_MARK;
-	if (pad & PAD_TRIGGER_L
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_1 | WPAD_CLASSIC_BUTTON_FULL_L)
-#endif
-	)
-		return UI_KEY_PREVIOUS;
-	if (pad & PAD_TRIGGER_R
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_2 | WPAD_CLASSIC_BUTTON_FULL_R)
-#endif
-	)
-		return UI_KEY_NEXT;
-	if (pad & PAD_BUTTON_START
-#ifdef HW_RVL
-	    || remote & (WPAD_BUTTON_HOME | WPAD_CLASSIC_BUTTON_PLUS)
-#endif
-	)
-		return UI_KEY_HELP;
-
 	if (pad & PAD_BUTTON_UP
 #ifdef HW_RVL
 	    || remote & (WPAD_BUTTON_UP | WPAD_CLASSIC_BUTTON_UP)
@@ -138,6 +104,101 @@ static ui_key ui_read_key(void)
 #endif
 	)
 		return UI_KEY_RIGHT;
+	return UI_KEY_NONE;
+}
+
+static ui_key ui_read_key(void)
+{
+	static bool stick_latched = false;
+	static ui_key repeated_direction = UI_KEY_NONE;
+	static u32 next_repeat;
+	u32 pad = PAD_ButtonsDown(0);
+	u32 held_pad = PAD_ButtonsHeld(0);
+	s8 stick_x = PAD_StickX(0);
+	s8 stick_y = PAD_StickY(0);
+#ifdef HW_RVL
+	u32 remote = WPAD_ButtonsDown(0);
+	u32 held_remote = WPAD_ButtonsHeld(0);
+
+	if (power)
+		PowerOff();
+#endif
+
+	/* ButtonsDown lasts one retrace. Use held state for actions so short
+	 * presses between UI redraws are not lost; callers release before reuse. */
+	if ((pad | held_pad) & PAD_BUTTON_A
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_A)
+#endif
+	)
+		return UI_KEY_CONFIRM;
+	if ((pad | held_pad) & PAD_BUTTON_B
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_B)
+#endif
+	)
+		return UI_KEY_BACK;
+	if ((pad | held_pad) & PAD_BUTTON_X
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_PLUS | WPAD_CLASSIC_BUTTON_X)
+#endif
+	)
+		return UI_KEY_CONTEXT;
+	if ((pad | held_pad) & PAD_BUTTON_Y
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_Y)
+#endif
+	)
+		return UI_KEY_MARK;
+	if ((pad | held_pad) & PAD_TRIGGER_L
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_1 | WPAD_CLASSIC_BUTTON_FULL_L)
+#endif
+	)
+		return UI_KEY_PREVIOUS;
+	if ((pad | held_pad) & PAD_TRIGGER_R
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_2 | WPAD_CLASSIC_BUTTON_FULL_R)
+#endif
+	)
+		return UI_KEY_NEXT;
+	if ((pad | held_pad) & PAD_BUTTON_START
+#ifdef HW_RVL
+	    || (remote | held_remote) & (WPAD_BUTTON_HOME | WPAD_CLASSIC_BUTTON_PLUS)
+#endif
+	)
+		return UI_KEY_HELP;
+
+	{
+		ui_key direction = ui_direction_from_masks(pad
+#ifdef HW_RVL
+			, remote
+#endif
+		);
+		if (direction != UI_KEY_NONE) {
+			repeated_direction = direction;
+			next_repeat = retraceCount + 18;
+			return direction;
+		}
+	}
+
+	{
+		ui_key direction = ui_direction_from_masks(held_pad
+#ifdef HW_RVL
+			, held_remote
+#endif
+		);
+		if (direction == UI_KEY_NONE) {
+			repeated_direction = UI_KEY_NONE;
+		} else if (direction != repeated_direction) {
+			repeated_direction = direction;
+			next_repeat = retraceCount + 18;
+			return direction;
+		} else if ((s32)(retraceCount - next_repeat) >= 0) {
+			next_repeat = retraceCount + 4;
+			return direction;
+		}
+	}
 
 	if (stick_x > -35 && stick_x < 35 && stick_y > -35 && stick_y < 35)
 		stick_latched = false;
@@ -170,6 +231,10 @@ static void ui_begin(const char *title, const char *subtitle)
 	DrawBox(24, 24, 615, 398, UI_BORDER);
 	DrawBoxFilled(24, 24, 615, 69, UI_PANEL_ALT);
 	DrawBoxFilled(24, 68, 615, 70, UI_ACCENT);
+	DrawBMPAt((u8 *)ui_logo_bmp, 482, 36);
+	setfontsize(12);
+	setfontcolour(UI_MUTED);
+	DrawText(432, 55, (char *)appversion);
 
 	setfontsize(20);
 	setfontcolour(UI_TEXT);
@@ -192,7 +257,7 @@ static int ui_marked_count(const bool *marked, int entry_count)
 	int i;
 	int count = 0;
 
-	if (!marked)
+	if (!marked || entry_count < 0 || entry_count > CARD_MAXFILES)
 		return 0;
 	for (i = 0; i < entry_count; i++)
 		if (marked[i])
@@ -200,19 +265,28 @@ static int ui_marked_count(const bool *marked, int entry_count)
 	return count;
 }
 
-int UI_Menu(const char *title, const char *subtitle,
-	const char *const items[], int item_count, int initial_selection,
-	const char *help, bool allow_back)
+int UI_MenuDisabled(const char *title, const char *subtitle,
+	const char *const items[], const bool enabled[], int item_count,
+	int initial_selection, const char *help, bool allow_back)
 {
 	int selected = initial_selection;
 	int first;
 	int i;
+	int enabled_count = 0;
+	char page[32];
 	ui_key key;
 
 	if (item_count <= 0)
 		return -1;
+	for (i = 0; i < item_count; i++)
+		if (!enabled || enabled[i])
+			enabled_count++;
+	if (!enabled_count)
+		return -1;
 	if (selected < 0 || selected >= item_count)
 		selected = 0;
+	while (enabled && !enabled[selected])
+		selected = selected + 1 < item_count ? selected + 1 : 0;
 
 	ui_wait_release();
 	for (;;) {
@@ -221,25 +295,39 @@ int UI_Menu(const char *title, const char *subtitle,
 		for (i = first; i < item_count && i < first + 9; i++) {
 			int y = 125 + (i - first) * 29;
 			if (i == selected) {
-				DrawBoxFilled(42, y - 20, 595, y + 7, UI_SELECTED);
-				DrawBoxFilled(42, y - 20, 47, y + 7, UI_ACCENT);
+				DrawBoxFilled(42, y - 20, 595, y + 7,
+					ui_destructive_confirmation ? UI_DESTRUCTIVE : UI_SELECTED);
+				DrawBoxFilled(42, y - 20, 47, y + 7,
+					ui_destructive_confirmation ? UI_WARNING : UI_ACCENT);
 				setfontcolour(UI_TEXT);
 				DrawText(60, y, ">");
+			} else if (enabled && !enabled[i]) {
+				setfontcolour(UI_DISABLED);
 			} else {
 				setfontcolour(UI_MUTED);
 			}
 			DrawText(82, y, (char *)items[i]);
+		}
+		if (item_count > 9) {
+			snprintf(page, sizeof(page), "Page %d/%d", selected / 9 + 1,
+				(item_count + 8) / 9);
+			setfontsize(12);
+			setfontcolour(UI_MUTED);
+			DrawText(530, 91, page);
+			setfontsize(14);
 		}
 		ui_footer(help ? help : (allow_back ? "A Select   B Back" : "A Select"));
 		ShowScreen();
 
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
-			selected = selected > 0 ? selected - 1 : item_count - 1;
-			usleep(90000);
+			do {
+				selected = selected > 0 ? selected - 1 : item_count - 1;
+			} while (enabled && !enabled[selected]);
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
-			selected = selected + 1 < item_count ? selected + 1 : 0;
-			usleep(90000);
+			do {
+				selected = selected + 1 < item_count ? selected + 1 : 0;
+			} while (enabled && !enabled[selected]);
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return selected;
@@ -253,8 +341,16 @@ int UI_Menu(const char *title, const char *subtitle,
 	}
 }
 
+int UI_Menu(const char *title, const char *subtitle,
+	const char *const items[], int item_count, int initial_selection,
+	const char *help, bool allow_back)
+{
+	return UI_MenuDisabled(title, subtitle, items, NULL, item_count,
+		initial_selection, help, allow_back);
+}
+
 int UI_HomeMenu(const char *card_a, const char *card_b,
-	const char *storage, int initial_selection)
+	const char *storage, const char *transfer, int initial_selection)
 {
 	static const char *const items[] = {
 		"Manage saves",
@@ -270,20 +366,21 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 		selected = 0;
 	ui_wait_release();
 	for (;;) {
-		ui_begin("GC Memory Manager", "Connected devices");
-		DrawBoxFilled(42, 104, 595, 163, UI_PANEL_ALT);
+		ui_begin("GCMM-EX", "Connected devices");
+		DrawBoxFilled(42, 104, 595, 189, UI_PANEL_ALT);
 		setfontsize(12);
 		setfontcolour(UI_TEXT);
 		DrawText(58, 124, (char *)card_a);
 		DrawText(330, 124, (char *)card_b);
 		setfontcolour(UI_MUTED);
 		DrawText(58, 150, (char *)storage);
+		DrawText(58, 176, (char *)transfer);
 
 		setfontsize(14);
 		setfontcolour(UI_TEXT);
-		DrawText(42, 190, "What would you like to do?");
+		DrawText(42, 216, "What would you like to do?");
 		for (i = 0; i < 4; i++) {
-			int y = 225 + i * 35;
+			int y = 251 + i * 35;
 			if (i == selected) {
 				DrawBoxFilled(42, y - 22, 595, y + 9, UI_SELECTED);
 				DrawBoxFilled(42, y - 22, 47, y + 9, UI_ACCENT);
@@ -300,10 +397,8 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
 			selected = selected > 0 ? selected - 1 : 3;
-			usleep(90000);
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
 			selected = selected < 3 ? selected + 1 : 0;
-			usleep(90000);
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return selected;
@@ -318,22 +413,28 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 }
 
 ui_list_action UI_SaveList(const char *title, const char *subtitle,
-	u8 entries[][1024], int entry_count, int *selection, bool *marked)
+	u8 entries[][1024], int entry_count, int *selection, bool *marked,
+	int card_slot)
 {
 	int first;
 	int i;
 	int marked_count;
 	char footer[96];
 	char label[58];
+	char page[32];
 	ui_key key;
 
-	if (!selection || entry_count <= 0)
+	if (!selection || !entries || entry_count <= 0 || entry_count > 1024 ||
+		(marked && entry_count > CARD_MAXFILES))
 		return UI_LIST_BACK;
 	if (*selection < 0 || *selection >= entry_count)
 		*selection = 0;
 	ui_wait_release();
 
 	for (;;) {
+		if (card_slot >= CARD_SLOTA && card_slot <= CARD_SLOTB &&
+			CARD_Probe(card_slot) <= 0)
+			return UI_LIST_DEVICE_REMOVED;
 		first = (*selection / UI_PAGE_SIZE) * UI_PAGE_SIZE;
 		marked_count = ui_marked_count(marked, entry_count);
 		ui_begin(title, subtitle);
@@ -347,22 +448,31 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 			} else {
 				setfontcolour(UI_MUTED);
 			}
+			if (strnlen((char *)entries[i], sizeof(entries[i])) >= sizeof(entries[i]))
+				return UI_LIST_BACK;
 			snprintf(label, sizeof(label), "%s %.48s",
 				marked && marked[i] ? "[x]" : "[ ]", (char *)entries[i]);
 			DrawText(58, y, label);
 		}
-		snprintf(footer, sizeof(footer),
-			"A Open   X Options   Y Mark (%d)   B Back   L/R Device", marked_count);
+		snprintf(page, sizeof(page), "Page %d/%d", *selection / UI_PAGE_SIZE + 1,
+			(entry_count + UI_PAGE_SIZE - 1) / UI_PAGE_SIZE);
+		setfontsize(12);
+		setfontcolour(UI_MUTED);
+		DrawText(530, 91, page);
+		setfontsize(14);
+		if (marked)
+			snprintf(footer, sizeof(footer),
+				"A Open   X Options   Y Mark (%d)   B Back   L/R Device", marked_count);
+		else
+			snprintf(footer, sizeof(footer), "A Select   B Back");
 		ui_footer(footer);
 		ShowScreen();
 
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
 			*selection = *selection > 0 ? *selection - 1 : entry_count - 1;
-			usleep(70000);
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
 			*selection = *selection + 1 < entry_count ? *selection + 1 : 0;
-			usleep(70000);
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return UI_LIST_OPEN;
@@ -371,7 +481,6 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 			return UI_LIST_CONTEXT;
 		} else if (key == UI_KEY_MARK && marked) {
 			marked[*selection] = !marked[*selection];
-			usleep(120000);
 		} else if (key == UI_KEY_PREVIOUS) {
 			ui_wait_release();
 			return UI_LIST_PREVIOUS_DEVICE;
@@ -388,11 +497,15 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 	}
 }
 
-bool UI_Confirm(const char *title, const char *message,
-	const char *detail, const char *confirm_label)
+static bool ui_confirm(const char *title, const char *message,
+	const char *detail, const char *confirm_label, bool destructive)
 {
 	const char *items[2] = { "Cancel", confirm_label };
-	int choice = UI_Menu(title, message, items, 2, 0,
+	bool previous_style = ui_destructive_confirmation;
+	int choice;
+
+	ui_destructive_confirmation = destructive;
+	choice = UI_Menu(title, message, items, 2, 0,
 		"A Confirm selection   B Cancel", true);
 
 	if (detail && detail[0] && choice == 1) {
@@ -400,7 +513,20 @@ bool UI_Confirm(const char *title, const char *message,
 		choice = UI_Menu("Final confirmation", detail, final_items, 2, 0,
 			"Review carefully. A Confirm   B Cancel", true);
 	}
+	ui_destructive_confirmation = previous_style;
 	return choice == 1;
+}
+
+bool UI_Confirm(const char *title, const char *message,
+	const char *detail, const char *confirm_label)
+{
+	return ui_confirm(title, message, detail, confirm_label, false);
+}
+
+bool UI_ConfirmDestructive(const char *title, const char *message,
+	const char *detail, const char *confirm_label)
+{
+	return ui_confirm(title, message, detail, confirm_label, true);
 }
 
 void UI_Message(const char *title, const char *message, const char *detail)
@@ -436,7 +562,10 @@ void UI_Details(const char *title, const char *const lines[], int line_count)
 		DrawBoxFilled(42, 112, 595, 350, UI_PANEL_ALT);
 		setfontsize(14);
 		for (i = 0; i < line_count && i < 8; i++) {
-			setfontcolour(i == 0 ? UI_TEXT : UI_MUTED);
+			if (i == 0)
+				setfontcolour(UI_TEXT);
+			else
+				setfontcolour(UI_MUTED);
 			DrawText(58, 143 + i * 27, (char *)lines[i]);
 		}
 		ui_footer("A Close   B Back");
@@ -450,12 +579,19 @@ void UI_Details(const char *title, const char *const lines[], int line_count)
 	}
 }
 
+void UI_SetTransferState(const char *source, const char *destination)
+{
+	ui_transfer_source = source ? source : "Not selected";
+	ui_transfer_destination = destination ? destination : "Not selected";
+}
+
 void UI_Progress(const char *title, const char *item, int current, int total)
 {
 	int filled;
 	char progress[48];
+	bool determinate = total > 0;
 
-	if (total < 1)
+	if (!determinate)
 		total = 1;
 	if (current < 0)
 		current = 0;
@@ -464,12 +600,19 @@ void UI_Progress(const char *title, const char *item, int current, int total)
 	filled = 480 * current / total;
 
 	ui_begin(title, item);
+	setfontsize(12);
+	setfontcolour(UI_MUTED);
+	DrawText(58, 124, (char *)ui_transfer_source);
+	DrawText(58, 150, (char *)ui_transfer_destination);
 	DrawBoxFilled(78, 188, 560, 224, UI_PANEL_ALT);
 	DrawBox(78, 188, 560, 224, UI_BORDER);
-	if (filled > 0)
+	if (determinate && filled > 0)
 		DrawBoxFilled(80, 190, 80 + filled, 222, UI_ACCENT);
-	snprintf(progress, sizeof(progress), "%d of %d   %d%%", current, total,
-		100 * current / total);
+	if (determinate)
+		snprintf(progress, sizeof(progress), "%d of %d   %d%%", current, total,
+			100 * current / total);
+	else
+		snprintf(progress, sizeof(progress), "Working...");
 	setfontsize(14);
 	setfontcolour(UI_TEXT);
 	DrawText(-1, 260, progress);
@@ -477,9 +620,18 @@ void UI_Progress(const char *title, const char *item, int current, int total)
 	ShowScreen();
 }
 
+bool UI_CancelRequested(void)
+{
+	if (ui_read_key() != UI_KEY_BACK)
+		return false;
+	ui_wait_release();
+	return true;
+}
+
 void UI_Help(void)
 {
-	ui_begin("Controls", "Same controls throughout GC Memory Manager");
+	ui_wait_release();
+	ui_begin("Controls", "Same controls throughout GCMM-EX");
 	setfontsize(14);
 	setfontcolour(UI_TEXT);
 	DrawText(58, 130, "D-pad / Analog    Navigate");

@@ -22,3 +22,4 @@ void getserial(u8 *serial);
 u64 Card_SerialNo(s32 slot);
 s8 BackupRawImage(s32 slot, s32 *bytes_writen);
 s8 RestoreRawImage(s32 slot, char *sdfilename, s32 *bytes_writen);
+int ValidateRawImage(s32 slot, const char *sdfilename, u32 *image_size);

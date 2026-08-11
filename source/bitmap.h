@@ -4,6 +4,7 @@ extern u32 *xfb[2]; /*** Framebuffers ***/
 extern int whichfb; /*** Frame buffer toggle ***/
 u32 CvtRGB(u8 r1, u8 g1, u8 b1, u8 r2, u8 g2, u8 b2);
 u32 ShowBMP (u8 *bmpfile);
+u32 DrawBMPAt(u8 *bmpfile, int x, int y);
 void ShowBanner ();
 void ShowIcon   ();
 void ClearScreen();

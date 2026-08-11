@@ -14,11 +14,10 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Usar devkitPPC/devkitPro, libogc2, libdvm, PowerPC FreeType (`ppc-freetype`) e zlib.
 - Manter o código C compatível com `gnu17`. Não migrar silenciosamente para C23, C++ ou outra linguagem.
 - Manter `Makefile.gc` e `Makefile.wii` alinhados quando uma mudança compartilhada afetar compilação, bibliotecas, flags ou assets.
-- Preservar as quatro variantes oficiais e seus diretórios intermediários separados:
-  - GameCube claro: `make gc` -> `releases/gcmm_GC.dol`.
-  - Wii claro: `make wii` -> `releases/gcmm_WII.dol`.
-  - GameCube escuro: `make gc-dark` -> `releases/gcmm_GC_dark.dol`.
-  - Wii escuro: `make wii-dark` -> `releases/gcmm_WII_dark.dol`.
+- Manter apenas um tema visual. Ele não precisa ser identificado como “dark” em código, comandos, assets ou documentação.
+- Preservar as duas variantes oficiais e seus diretórios intermediários separados:
+  - GameCube: `make gc` -> `releases/gcmm_GC.dol`.
+  - Wii: `make wii` -> `releases/gcmm_WII.dol`.
 - Não versionar artefatos gerados em `build_GC*`, `build_WII*` ou `releases/`.
 - A biblioteca de filesystem continua vinculada como `-lfat`, mas deve ser fornecida por `libogc2-libdvm`. Não substituir por `libogc2-libfat`, pois isso remove a configuração atual de detecção de partições e exFAT.
 
@@ -27,7 +26,7 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Manter código compartilhado em `source/` e código exclusivo do GameCube em `source/aram/`.
 - Manter assets compartilhados em `data/`, assets do GameCube em `data-gc/` e assets do Wii em `data-wii/`.
 - Isolar comportamento específico por plataforma com os guards existentes: `HW_DOL` para GameCube e `HW_RVL` para Wii.
-- Isolar tema com `LIGHT_MODE` e `DARK_MODE`; qualquer mudança visual deve ser verificada nos dois temas e nas duas plataformas.
+- Não introduzir variantes, flags ou condicionais de tema. Qualquer mudança visual deve ser verificada nas duas plataformas.
 - Não remover suporte atual:
   - Wii: SD frontal, USB e SD Gecko nos slots A/B.
   - GameCube: SD2SP2, SD Gecko nos slots A/B e GC Loader.
@@ -35,7 +34,7 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 - Preservar a montagem por `libdvm`, a detecção do filesystem por partição, a escolha do primeiro volume suportado e a desmontagem de todos os volumes montados pelo dispositivo.
 
 ## Regras de código
-
+- Algumas configurações estão em /.env.md
 - Escrever código claro, organizado e de fácil manutenção, respeitando a arquitetura e o estilo legado do arquivo alterado.
 - Preferir mudanças pequenas e localizadas. Não introduzir dependências, abstrações ou reescritas amplas sem necessidade comprovada.
 - Tratar limites de buffer, tamanhos de arquivo, alinhamento e retorno de APIs explicitamente. Hardware alvo possui memória limitada; o GameCube dispõe de 24 MB de MEM1 e o projeto já mantém um buffer de arquivos de 2 MB.
@@ -58,7 +57,7 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 
 - Seguir os padrões visuais existentes antes de criar novas abordagens.
 - Reutilizar funções, componentes gráficos, fontes, backgrounds e convenções de posicionamento atuais.
-- Manter consistência de tipografia, cores, espaçamento, contraste, estados e hierarquia entre temas e plataformas.
+- Manter consistência de tipografia, cores, espaçamento, contraste, estados e hierarquia nas duas plataformas.
 - Preservar acesso equivalente pelas entradas suportadas: controle de GameCube e Wii Remote quando aplicável.
 - Não ocultar informações críticas, prompts de confirmação, erros, dispositivo selecionado ou progresso de operações.
 - Considerar overscan e legibilidade em telas de definição padrão; não assumir layout web, mouse, teclado, alta resolução ou touch.
@@ -74,8 +73,8 @@ Este arquivo é a fonte oficial de regras para análise, implementação, docume
 
 ## Validação
 
-- Compilar todas as variantes afetadas. Para mudanças compartilhadas, validar `make gc`, `make wii`, `make gc-dark` e `make wii-dark`.
-- Para mudanças exclusivas de plataforma ou tema, validar ao menos todas as variantes que usam o trecho ou asset alterado.
+- Compilar todas as variantes afetadas. Para mudanças compartilhadas, validar `make gc` e `make wii`.
+- Para mudanças exclusivas de plataforma, validar ao menos todas as variantes que usam o trecho ou asset alterado.
 - Executar `make clean` antes de uma validação final quando houver risco de objetos ou assets obsoletos.
 - Não afirmar que uma build ou teste passou sem executar o comando correspondente. Se o toolchain ou hardware não estiver disponível, registrar claramente a limitação.
 - Como não há suíte automatizada no repositório, complementar a compilação com revisão dos fluxos afetados e, quando possível, teste em hardware real ou emulador.

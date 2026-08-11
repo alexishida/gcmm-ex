@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <zlib.h>
 #include <ogc/libversion.h>
 #if (_V_MAJOR_ <= 2) && (_V_MINOR_ <= 2)
 /* gci.h's card_direntry and card.c's struct card_direntry describe the same
@@ -70,12 +71,6 @@ int lasticon;
      We add 10 to filenamelen since we add on game company info***/
 u8 filelist[1024][1024];
 u8 currFolder[260];
-int folderCount;
-int displaypath;
-int maxfile;
-extern int cancel;
-extern bool offsetchanged;
-extern int mode;
 
 /*** Card lib ***/
 card_dir CardList[CARD_MAXFILES];	/*** Directory listing ***/
@@ -87,6 +82,18 @@ static u8 permission;
 s32 memsize, sectsize;
 
 card_direntry gci;
+
+static int copy_save_data(void *destination, size_t destination_size,
+	size_t *data_offset, size_t length, int file_size)
+{
+	if (!destination || !data_offset || length > destination_size || file_size < 0 ||
+		*data_offset > (size_t)file_size ||
+		length > (size_t)file_size - *data_offset)
+		return 0;
+	memcpy(destination, FileBuffer + MCDATAOFFSET + *data_offset, length);
+	*data_offset += length;
+	return 1;
+}
 
 //The following code is made by Ralf at GSCentral forums (gscentral.org)
 //http://board.gscentral.org/retro-hacking/53093.htm#post188949
@@ -154,7 +161,6 @@ int MountCard(int cslot)
 u16 FreeBlocks(s32 chn)
 {
 	s32 err;
-	static u8 noinserted = 0;
 	u16 freeblocks = 0;
 	/*** Try to mount the card ***/
 	err = MountCard(chn);
@@ -163,7 +169,6 @@ u16 FreeBlocks(s32 chn)
 		//We want to allow browsing saves in sd even with no card
 		if (err == CARD_ERROR_NOCARD)
 		{
-			noinserted = 1;
 			if(chn) ShowAction("No card inserted in slot B!");
 			else ShowAction("No card inserted in slot A!");
 			return 0;
@@ -180,8 +185,7 @@ u16 FreeBlocks(s32 chn)
             //We want to allow browsing saves in sd even with no card
             if (err == CARD_ERROR_NOCARD)
             {
-				noinserted = 1;
-                if(chn) ShowAction("No card inserted in slot B!");
+				if(chn) ShowAction("No card inserted in slot B!");
                 else ShowAction("No card inserted in slot A!");
                 return 0;
             }else
@@ -190,15 +194,6 @@ u16 FreeBlocks(s32 chn)
 				return 0;
             }
 		}
-	}
-	if (noinserted)
-	{
-		if (mode == 300)//Backup mode
-			writeStatusBar("Pick a file using UP or DOWN ", "Press A to backup savegame");
-		else if (mode == 400)//Restore mode
-			writeStatusBar("Pick a file using UP or DOWN", "Press A to restore to Memory Card ");
-		else
-			writeStatusBar("","");
 	}
 	CARD_Unmount(chn);
 	return freeblocks;
@@ -298,23 +293,45 @@ int CardGetDirectory (int slot)
 	/*** Retrieve the directory listing ***/
 	cardcount = 0;
 	err = CARD_FindFirst (slot, &CardDir, true); //true means we want to showall
-	while (err != CARD_ERROR_NOFILE)
+	while (err >= 0 && cardcount < CARD_MAXFILES)
 	{
 		memcpy (&CardList[cardcount], &CardDir, sizeof (card_dir));
 		memset (filelist[cardcount], 0, 1024);
 		memcpy (company, &CardDir.company, 2);
 		memcpy (gamecode, &CardDir.gamecode, 4);
 		//This array will store what will show in left window
-		sprintf ((char*)filelist[cardcount], "%s-%s-%s", company, gamecode, CardDir.filename);
+		snprintf((char *)filelist[cardcount], 1024, "%s-%s-%.32s", company,
+			gamecode, CardDir.filename);
 		cardcount++;
 		err = CARD_FindNext (&CardDir);
 	}
+	if (err < 0 && err != CARD_ERROR_NOFILE)
+		WaitCardError("CardDirectory", err);
 
 	/*** Release as soon as possible ***/
 	CARD_Unmount (slot);
 
-	maxfile = cardcount;
 	return cardcount;
+}
+
+int MCardIsValidSaveIndex(int id)
+{
+	return id >= 0 && id < cardcount && id < CARD_MAXFILES;
+}
+
+int MCardGetUsage(int slot, int *save_count, u16 *free_blocks)
+{
+	int err;
+
+	if (!save_count || !free_blocks)
+		return 0;
+	*save_count = CardGetDirectory(slot);
+	err = MountCard(slot);
+	if (err < 0)
+		return 0;
+	err = CARD_GetFreeBlocks(slot, free_blocks);
+	CARD_Unmount(slot);
+	return err >= 0;
 }
 
 /****************************************************************************
@@ -325,6 +342,7 @@ void CardListFiles ()
 	int i;
 	char company[4];
 	char gamecode[6];
+	char filename[CARD_FILENAMELEN + 1];
 
 	//add null char
 	company[2] = gamecode[4] = 0;
@@ -333,7 +351,9 @@ void CardListFiles ()
 	{
 		memcpy (company, &CardList[i].company, 2);
 		memcpy (gamecode, &CardList[i].gamecode, 4);
-		printf ("%s %s %s\n", company, gamecode, CardList[i].filename);
+		memcpy(filename, CardList[i].filename, CARD_FILENAMELEN);
+		filename[CARD_FILENAMELEN] = '\0';
+		printf ("%s %s %s\n", company, gamecode, filename);
 	}
 }
 /****************************************************************************
@@ -350,11 +370,12 @@ int CardReadFileHeader (int slot, int id)
 	u32 SectorSize;
 	char company[4];
 	char gamecode[6];
+	char filename[CARD_FILENAMELEN + 1];
 	int filesize;
 	int i;
-	u16 check_fmt, check_speed;
+	size_t data_offset;
 
-	if (id >= cardcount)
+	if (!MCardIsValidSaveIndex(id))
 	{
 		WaitPrompt("Bad id");
 		return 0;			/*** Bad id ***/
@@ -366,6 +387,8 @@ int CardReadFileHeader (int slot, int id)
 	memset (SysArea, 0, CARD_WORKAREA);
 	//add null char
 	company[2] = gamecode[4] = 0;
+	memcpy(filename, CardList[id].filename, CARD_FILENAMELEN);
+	filename[CARD_FILENAMELEN] = '\0';
 
 	memcpy (company, &CardList[id].company, 2);
 	memcpy (gamecode, &CardList[id].gamecode, 4);
@@ -379,14 +402,19 @@ int CardReadFileHeader (int slot, int id)
 	}
 
 	/*** Retrieve sector size ***/
-	CARD_GetSectorSize (slot, &SectorSize);
+	err = CARD_GetSectorSize(slot, &SectorSize);
+	if (err < 0 || SectorSize == 0 || SectorSize % 32 != 0) {
+		CARD_Unmount(slot);
+		WaitCardError("CardSectorSize", err);
+		return 0;
+	}
 
 	/*** Initialise for this company & gamecode ***/
 	CARD_SetCompany((const char*)company);
 	CARD_SetGamecode((const char*)gamecode);
 
 	/*** Open the file ***/
-	err = CARD_Open (slot, (char *) &CardList[id].filename, &CardFile);
+	err = CARD_Open(slot, filename, &CardFile);
 	if (err < 0)
 	{
 		CARD_Unmount (slot);
@@ -396,24 +424,51 @@ int CardReadFileHeader (int slot, int id)
 
 #ifdef STATUSOGC
 	/*** Get card status info ***/
-	CARD_GetStatus (slot, CardFile.filenum, &CardStatus);
-	CARD_GetAttributes(slot,CardFile.filenum, &permission);
+	err = CARD_GetStatus (slot, CardFile.filenum, &CardStatus);
+	if (err >= 0)
+		err = CARD_GetAttributes(slot,CardFile.filenum, &permission);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardStatus", err);
+		return 0;
+	}
 
 	GCIMakeHeader();
 #else
 	//get directory entry (same as gci header, but with all the data)
 	memset(&gci,0,sizeof(card_direntry));
-	CARD_GetStatusEx(slot,CardFile.filenum,&gci);
+	err = CARD_GetStatusEx(slot,CardFile.filenum,&gci);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardStatus", err);
+		return 0;
+	}
 	/*** Copy to head of buffer ***/
 	memcpy(FileBuffer, &gci, sizeof(card_direntry));
 #endif
 
 	/*** Copy the file contents to the buffer ***/
 	filesize = CardFile.len;
+	if (filesize < 0 || filesize > MAXFILEBUFFER - MCDATAOFFSET ||
+		filesize % SectorSize != 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitPrompt("Save file is too large or has an invalid size.");
+		return 0;
+	}
 
 	while (bytesdone < filesize)
 	{
-		CARD_Read (&CardFile, FileBuffer + MCDATAOFFSET + bytesdone, SectorSize, bytesdone);
+		err = CARD_Read(&CardFile, FileBuffer + MCDATAOFFSET + bytesdone,
+			SectorSize, bytesdone);
+		if (err < 0) {
+			CARD_Close(&CardFile);
+			CARD_Unmount(slot);
+			WaitCardError("CardRead", err);
+			return 0;
+		}
 		bytesdone += SectorSize;
 	}
 
@@ -421,19 +476,21 @@ int CardReadFileHeader (int slot, int id)
 		Get the Banner/Icon Data from the memory card file.
 		Very specific if/else setup to minimize data copies.
 	***/
-	u8* offset = FileBuffer + MCDATAOFFSET + gci.icon_addr;
+	data_offset = gci.icon_addr;
 
 	/*** Get the Banner/Icon Data from the save file ***/
 	if ((gci.banner_fmt&CARD_BANNER_MASK) == CARD_BANNER_RGB) {
 		//RGB banners are 96*32*2 in size
-		memcpy(bannerdata, offset, 6144);
-		offset += 6144;
+		if (!copy_save_data(bannerdata, sizeof(bannerdata), &data_offset, 6144,
+			filesize))
+			goto invalid_metadata;
 	}
 	else if ((gci.banner_fmt&CARD_BANNER_MASK) == CARD_BANNER_CI) {
-		memcpy(bannerdataCI, offset, 3072);
-		offset += 3072;
-		memcpy(tlutbanner, offset, 512);
-		offset += 512;
+		if (!copy_save_data(bannerdataCI, sizeof(bannerdataCI), &data_offset, 3072,
+			filesize) ||
+			!copy_save_data(tlutbanner, sizeof(tlutbanner), &data_offset, 512,
+				filesize))
+			goto invalid_metadata;
 	}
 
 	//Icon data
@@ -443,7 +500,7 @@ int CardReadFileHeader (int slot, int id)
 	int j =0;
     i=0;
 	int current_icon = 0;
-	for (current_icon=0;i<CARD_MAXICONS;++current_icon){
+	for (current_icon = 0; current_icon < CARD_MAXICONS; ++current_icon) {
 
 		//no need to clear all values since we will only use the ones until lasticon
 		frametable[current_icon] = 0;
@@ -468,23 +525,26 @@ int CardReadFileHeader (int slot, int id)
 
 				//CI with shared palette
 				if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 1) {
-					memcpy(icondata[current_icon], offset, 1024);
-					offset += 1024;
+					if (!copy_save_data(icondata[current_icon],
+						sizeof(icondata[current_icon]), &data_offset, 1024, filesize))
+						goto invalid_metadata;
 					shared_pal = 1;
 				}
 				//CI with palette after the icon
 				else if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 3)
 				{
-					memcpy(icondata[current_icon], offset, 1024);
-					offset += 1024;
-					memcpy(tlut[current_icon], offset, 512);
-					offset += 512;
+					if (!copy_save_data(icondata[current_icon],
+						sizeof(icondata[current_icon]), &data_offset, 1024, filesize) ||
+						!copy_save_data(tlut[current_icon], sizeof(tlut[current_icon]),
+							&data_offset, 512, filesize))
+						goto invalid_metadata;
 				}
 				//RGB 16 bit icon
 				else if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 2)
 				{
-					memcpy(icondataRGB[current_icon], offset, 2048);
-					offset += 2048;
+					if (!copy_save_data(icondataRGB[current_icon],
+						sizeof(icondataRGB[current_icon]), &data_offset, 2048, filesize))
+						goto invalid_metadata;
 				}
 			}else
 			{       //Get next real icon
@@ -515,10 +575,15 @@ int CardReadFileHeader (int slot, int id)
         lasticon = j-1;
     }
 	//Get the shared palette
-	if (shared_pal) memcpy(tlut[8], offset, 512);
+	if (shared_pal && !copy_save_data(tlut[8], sizeof(tlut[8]), &data_offset, 512,
+		filesize))
+		goto invalid_metadata;
 
 	/*** Get the comment (two 32 byte strings) into buffer ***/
-	memcpy(CommentBuffer, FileBuffer + MCDATAOFFSET + gci.comment_addr, 64);
+	data_offset = gci.comment_addr;
+	if (!copy_save_data(CommentBuffer, sizeof(CommentBuffer), &data_offset,
+		sizeof(CommentBuffer), filesize))
+		goto invalid_metadata;
 
 	/*** Close the file ***/
 	CARD_Close (&CardFile);
@@ -527,6 +592,29 @@ int CardReadFileHeader (int slot, int id)
 	CARD_Unmount (slot);
 
 	return filesize + MCDATAOFFSET;
+
+invalid_metadata:
+	CARD_Close(&CardFile);
+	CARD_Unmount(slot);
+	WaitPrompt("Save metadata points outside the file.");
+	return 0;
+}
+
+/****************************************************************************
+ * MCardGetSaveDetails
+ *
+ * Reads metadata for one selected save. The directory remains the authority
+ * for list rendering; this only runs after the user opens details.
+ ****************************************************************************/
+int MCardGetSaveDetails(int slot, int id, card_direntry *entry, char comments[65])
+{
+	if (!entry || !comments || !CardReadFileHeader(slot, id))
+		return 0;
+
+	memcpy(entry, &gci, sizeof(*entry));
+	memcpy(comments, CommentBuffer, 64);
+	comments[64] = '\0';
+	return 1;
 }
 
 /****************************************************************************
@@ -542,9 +630,10 @@ int CardReadFile (int slot, int id)
 	u32 SectorSize;
 	char company[4];
 	char gamecode[6];
+	char filename[CARD_FILENAMELEN + 1];
 	int filesize;
 
-	if (id >= cardcount)
+	if (!MCardIsValidSaveIndex(id))
 	{
 		WaitPrompt("Bad id");
 		return 0;			/*** Bad id ***/
@@ -555,6 +644,8 @@ int CardReadFile (int slot, int id)
 	memset (SysArea, 0, CARD_WORKAREA);
 	//add null char
 	company[2] = gamecode[4] = 0;
+	memcpy(filename, CardList[id].filename, CARD_FILENAMELEN);
+	filename[CARD_FILENAMELEN] = '\0';
 
 	memcpy (company, &CardList[id].company, 2);
 	memcpy (gamecode, &CardList[id].gamecode, 4);
@@ -568,14 +659,19 @@ int CardReadFile (int slot, int id)
 	}
 
 	/*** Retrieve sector size ***/
-	CARD_GetSectorSize (slot, &SectorSize);
+	err = CARD_GetSectorSize(slot, &SectorSize);
+	if (err < 0 || SectorSize == 0 || SectorSize % 32 != 0) {
+		CARD_Unmount(slot);
+		WaitCardError("CardSectorSize", err);
+		return 0;
+	}
 
 	/*** Initialise for this company & gamecode ***/
 	CARD_SetCompany(company);
 	CARD_SetGamecode(gamecode);
 
 	/*** Open the file ***/
-	err = CARD_Open (slot, (char *) &CardList[id].filename, &CardFile);
+	err = CARD_Open(slot, filename, &CardFile);
 	if (err < 0)
 	{
 		CARD_Unmount (slot);
@@ -585,24 +681,51 @@ int CardReadFile (int slot, int id)
 
 #ifdef STATUSOGC
 	/*** Get card status info ***/
-	CARD_GetStatus (slot, CardFile.filenum, &CardStatus);
-	CARD_GetAttributes(slot,CardFile.filenum, &permission);
+	err = CARD_GetStatus(slot, CardFile.filenum, &CardStatus);
+	if (err >= 0)
+		err = CARD_GetAttributes(slot, CardFile.filenum, &permission);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardStatus", err);
+		return 0;
+	}
 
 	GCIMakeHeader();
 #else
 	//get directory entry (same as gci header, but with all the data)
 	memset(&gci,0,sizeof(card_direntry));
-	CARD_GetStatusEx(slot,CardFile.filenum,&gci);
+	err = CARD_GetStatusEx(slot, CardFile.filenum, &gci);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardStatus", err);
+		return 0;
+	}
 	/*** Copy to head of buffer ***/
 	memcpy(FileBuffer, &gci, sizeof(card_direntry));
 #endif
 
 	/*** Copy the file contents to the buffer ***/
 	filesize = CardFile.len;
+	if (filesize < 0 || filesize > MAXFILEBUFFER - MCDATAOFFSET ||
+		filesize % SectorSize != 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitPrompt("Save file is too large or has an invalid size.");
+		return 0;
+	}
 
 	while (bytesdone < filesize)
 	{
-		CARD_Read (&CardFile, FileBuffer + MCDATAOFFSET + bytesdone, SectorSize, bytesdone);
+		err = CARD_Read(&CardFile, FileBuffer + MCDATAOFFSET + bytesdone,
+			SectorSize, bytesdone);
+		if (err < 0) {
+			CARD_Close(&CardFile);
+			CARD_Unmount(slot);
+			WaitCardError("CardRead", err);
+			return 0;
+		}
 		bytesdone += SectorSize;
 	}
 
@@ -621,28 +744,37 @@ int CardReadFile (int slot, int id)
 * Relies on *GOOD* data being placed in the FileBuffer prior to calling.
 * See ReadSMBImage
 ****************************************************************************/
-int CardWriteFile (int slot)
+int CardWriteFile(int slot, int overwrite_allowed)
 {
 	char company[4];
 	char gamecode[6];
-	char filename[CARD_FILENAMELEN];
-	int err, ret;
+	char filename[CARD_FILENAMELEN + 1];
+	int err;
 	u32 SectorSize;
 	int offset;
 	int written;
 	int filelen;
-	char txt[128];
 
 	//add null char
 	company[2] = gamecode[4] = 0;
 
 	memset (SysArea, 0, CARD_WORKAREA);
-	memset(filename, 0, CARD_FILENAMELEN);
+	memset(filename, 0, sizeof(filename));
 	ExtractGCIHeader();
 	memcpy(company, &gci.company, 2);
 	memcpy(gamecode, &gci.gamecode, 4);
 	memcpy(filename, &gci.filename, CARD_FILENAMELEN);
-	filelen = gci.length * 8192;
+	if (gci.length == 0 ||
+		gci.length > (MAXFILEBUFFER - MCDATAOFFSET) / 8192) {
+		WaitPrompt("Save file is too large or has an invalid header.");
+		return 0;
+	}
+	filelen = (int)gci.length * 8192;
+	if (OFFSET < 0 || OFFSET > MCDATAOFFSET || OFFSET % 32 != 0 ||
+		filelen > MAXFILEBUFFER - MCDATAOFFSET - OFFSET) {
+		WaitPrompt("Save file is too large or has an invalid header.");
+		return 0;
+	}
 
 	/*** Mount the card ***/
 	err = MountCard(slot);
@@ -652,7 +784,16 @@ int CardWriteFile (int slot)
 		return 0;			/*** Unable to mount the card ***/
 	}
 
-	CARD_GetSectorSize (slot, &SectorSize);
+	err = CARD_GetSectorSize(slot, &SectorSize);
+	if (err < 0 || SectorSize == 0 || SectorSize % 32 != 0 ||
+		filelen % SectorSize != 0) {
+		CARD_Unmount(slot);
+		if (err < 0)
+			WaitCardError("CardSectorSize", err);
+		else
+			WaitPrompt("Save size is not aligned to the card sector size.");
+		return MCARD_WRITE_FAILED;
+	}
 
 	/*** Initialise for this company & gamecode ***/
 	CARD_SetCompany(company);
@@ -662,31 +803,22 @@ int CardWriteFile (int slot)
 	err = CARD_FindFirst (slot, &CardDir, false);
 	while (err != CARD_ERROR_NOFILE)
 	{
-		if ((memcmp(CardDir.gamecode, &gamecode, 4) == 0) && (memcmp(CardDir.company, &company, 2) == 0) && (strcmp ((char *) CardDir.filename, (char *)filename) == 0))
+		if (memcmp(CardDir.gamecode, gamecode, 4) == 0 &&
+			memcmp(CardDir.company, company, 2) == 0 &&
+			memcmp(CardDir.filename, filename, CARD_FILENAMELEN) == 0)
 		{
-			/*** Found the file - prompt user ***/
-			sprintf(txt, "Savegame %s(%s%s) already exists. Overwrite?", (char *)filename, gamecode, company);
-			ret = WaitPromptChoice(txt, "Overwrite", "Cancel");
-			if (!ret){
-				sprintf(txt, "Are you -SURE- you want to overwrite %s?", (char *)filename);
-				ret = WaitPromptChoiceAZ(txt, "Overwrite", "Cancel");
-				if(!ret){
-					err = CARD_Delete(slot, (char *) &filename);
-					if (err < 0)
-					{
-						WaitCardError("MCDel", err);
-						CARD_Unmount (slot);
-						return 0;
-					}
-					err = CARD_FindFirst (slot, &CardDir, false);
-					continue;
-				}
+			if (!overwrite_allowed) {
+				CARD_Unmount(slot);
+				return MCARD_WRITE_EXISTS;
 			}
-
-			/*** User canceled - abort ***/
-			CARD_Unmount (slot);
-			WaitCardError("File already exists", err);
-			return 0;
+				err = CARD_Delete(slot, filename);
+			if (err < 0) {
+				WaitCardError("MCDel", err);
+				CARD_Unmount(slot);
+				return MCARD_WRITE_FAILED;
+			}
+			err = CARD_FindFirst(slot, &CardDir, false);
+			continue;
 		}
 
 		err = CARD_FindNext (&CardDir);
@@ -702,25 +834,15 @@ tryagain:
 	err = CARD_Create (slot, (char *) filename, filelen, &CardFile);
 	if (err < 0)
 	{
-		if (err == CARD_ERROR_EXIST)
-		{
-			/*** Found the file - prompt user ***/
-			sprintf(txt, "File %s(%s%s) already exists. Overwrite?", (char *) filename, gamecode, company);
-			ret = WaitPromptChoice(txt, "Overwrite", "Cancel");
-			if (!ret){
-				sprintf(txt, "Are you -SURE- you want to overwrite %s?", (char *) filename);
-				ret = WaitPromptChoiceAZ(txt, "Overwrite", "Cancel");
-				if(!ret){
-					err = CARD_Delete(slot, (char *) &filename);
-					if (err < 0)
-					{
-						WaitCardError("MCDel", err);
-						CARD_Unmount (slot);
-						return 0;
-					}
-					goto tryagain;
-				}
+		if (err == CARD_ERROR_EXIST) {
+			if (!overwrite_allowed) {
+				CARD_Unmount(slot);
+				return MCARD_WRITE_EXISTS;
 			}
+			err = CARD_Delete(slot, filename);
+			if (err >= 0)
+				goto tryagain;
+			WaitCardError("MCDel", err);
 		}
 		CARD_Unmount (slot);
 		WaitCardError("CardCreate", err);
@@ -735,13 +857,14 @@ tryagain:
 	offset = 0;
 	while (offset < filelen)
 	{
-		if ((offset + SectorSize) <= filelen)
-		{
-			written = CARD_Write (&CardFile, FileBuffer + MCDATAOFFSET + offset + OFFSET, SectorSize, offset);
-		}
-		else
-		{
-			written = CARD_Write (&CardFile, FileBuffer + MCDATAOFFSET + offset + OFFSET, ((offset + SectorSize) - filelen), offset);
+		written = CARD_Write(&CardFile,
+			FileBuffer + MCDATAOFFSET + offset + OFFSET, SectorSize, offset);
+		if (written < 0) {
+			OFFSET = 0;
+			CARD_Close(&CardFile);
+			CARD_Unmount(slot);
+			WaitCardError("CardWrite", written);
+			return 0;
 		}
 
 		offset += SectorSize;
@@ -751,16 +874,112 @@ tryagain:
 
 #ifdef STATUSOGC
 	/*** Finally, update the status ***/
-	CARD_SetStatus (slot, CardFile.filenum, &CardStatus);
+	err = CARD_SetStatus(slot, CardFile.filenum, &CardStatus);
 	//For some reason this sets the file to Move->allowed, Copy->not allowed, Public file instead of the actual permission value
-	CARD_SetAttributes(slot, CardFile.filenum, &permission);
+	if (err >= 0)
+		err = CARD_SetAttributes(slot, CardFile.filenum, &permission);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardSetStatus", err);
+		return MCARD_WRITE_FAILED;
+	}
 #else
-	CARD_SetStatusEx(slot, CardFile.filenum, &gci);
+	err = CARD_SetStatusEx(slot, CardFile.filenum, &gci);
+	if (err < 0) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitCardError("CardSetStatus", err);
+		return MCARD_WRITE_FAILED;
+	}
 #endif
 
 	CARD_Close (&CardFile);
 	CARD_Unmount (slot);
 
+	return 1;
+}
+
+/****************************************************************************
+ * MCardVerifyLastWrite
+ *
+ * Reopens the save described by gci and compares its complete payload against
+ * the payload most recently written from FileBuffer. Move uses this before it
+ * is allowed to delete its source.
+ ****************************************************************************/
+int MCardVerifyLastWrite(int slot)
+{
+	char company[3];
+	char gamecode[5];
+	char filename[CARD_FILENAMELEN + 1];
+	u32 expected_crc;
+	u32 actual_crc;
+	u32 sector_size;
+	u32 offset;
+	u32 filelen;
+	int err;
+
+	if (gci.length == 0 ||
+		gci.length > (MAXFILEBUFFER - MCDATAOFFSET) / 8192)
+		return 0;
+	filelen = gci.length * 8192;
+	expected_crc = crc32(0L, Z_NULL, 0);
+	expected_crc = crc32(expected_crc, FileBuffer + MCDATAOFFSET, filelen);
+	memcpy(company, gci.company, 2);
+	company[2] = '\0';
+	memcpy(gamecode, gci.gamecode, 4);
+	gamecode[4] = '\0';
+	memcpy(filename, gci.filename, CARD_FILENAMELEN);
+	filename[CARD_FILENAMELEN] = '\0';
+
+	err = MountCard(slot);
+	if (err < 0) {
+		WaitCardError("CardVerify Mount", err);
+		return 0;
+	}
+	err = CARD_GetSectorSize(slot, &sector_size);
+	if (err < 0 || sector_size == 0 || sector_size % 32 != 0 ||
+		filelen % sector_size != 0) {
+		CARD_Unmount(slot);
+		if (err < 0)
+			WaitCardError("CardVerify SectorSize", err);
+		else
+			WaitPrompt("Save size is not aligned to the card sector size.");
+		return 0;
+	}
+
+	CARD_SetCompany(company);
+	CARD_SetGamecode(gamecode);
+	err = CARD_Open(slot, filename, &CardFile);
+	if (err < 0) {
+		CARD_Unmount(slot);
+		WaitCardError("CardVerify Open", err);
+		return 0;
+	}
+	if (CardFile.len != (int)filelen) {
+		CARD_Close(&CardFile);
+		CARD_Unmount(slot);
+		WaitPrompt("Destination save length does not match source.");
+		return 0;
+	}
+
+	actual_crc = crc32(0L, Z_NULL, 0);
+	for (offset = 0; offset < filelen; offset += sector_size) {
+		err = CARD_Read(&CardFile, FileBuffer + MCDATAOFFSET, sector_size, offset);
+		if (err < 0) {
+			CARD_Close(&CardFile);
+			CARD_Unmount(slot);
+			WaitCardError("CardVerify Read", err);
+			return 0;
+		}
+		actual_crc = crc32(actual_crc, FileBuffer + MCDATAOFFSET, sector_size);
+	}
+	CARD_Close(&CardFile);
+	CARD_Unmount(slot);
+	if (actual_crc != expected_crc) {
+		WaitPrompt("Destination verification failed. Source was not deleted.");
+		return 0;
+	}
 	return 1;
 }
 
@@ -829,84 +1048,6 @@ void WaitCardError(char *src, int error)
 	WaitPrompt(msg);
 }
 
-void MC_DeleteMode(int slot)
-{
-	int memitems, err;
-	int selected = 0;
-	int erase;
-	
-	displaypath = 0;
-	
-	clearRightPane();
-	DrawText(386,130,"D e l e t e   M o d e");
-	DrawText(386,134,"_____________________");
-	char msg[1024];
-
-	writeStatusBar("Reading memory card... ", "");
-	/*** Get the directory listing from the memory card ***/
-	memitems = CardGetDirectory (slot);
-
-	setfontsize (14);
-	writeStatusBar("Choose a file with UP button or DOWN button ", "Press A button to delete ") ;
-
-	/*** If it's a blank card, get out of here ***/
-	if (!memitems)
-	{
-		WaitPrompt ("No saved games to delete !");
-	}
-	else
-	{
-		while(1)
-		{
-			// TODO: implement showselector
-			selected = ShowSelector(1);
-			if (cancel)
-			{
-				WaitPrompt ("Delete action cancelled !");
-				return;
-			}
-
-			//0 = Z or 2 was pressed -> delete the file
-			erase = WaitPromptChoiceAZ("Are you sure you want to delete the file?", "Delete", "Cancel");
-			if (!erase)
-			{
-				// selected = 1;
-
-				/*** Delete the file ***/
-				sprintf(msg, "Deleting \"%s\"", CardList[selected].filename);
-				writeStatusBar(msg,"");
-				//WaitPrompt(msg);
-				
-				/*** Try to mount the card ***/
-				err = MountCard(slot);
-				if (err < 0)
-				{
-					WaitCardError("MCDel Mount", err);
-					return; /*** Unable to mount the card ***/
-				}
-
-				/*** Initialise for this company & gamecode ***/
-				CARD_SetCompany(CardList[selected].company);
-				CARD_SetGamecode(CardList[selected].gamecode);
-
-				err = CARD_Delete(slot, (char *) &CardList[selected].filename);
-				if (err < 0)
-				{
-					WaitCardError("MCDel", err);
-				}
-				else
-				{
-					WaitPrompt("Delete complete");
-				}
-
-				CARD_Unmount(slot);
-				return;
-			}
-			offsetchanged = true;
-		}
-	}
-}
-
 /****************************************************************************
  * MCardDeleteFile
  *
@@ -917,9 +1058,18 @@ void MC_DeleteMode(int slot)
 int MCardDeleteFile(int slot, int id)
 {
 	int err;
+	char company[3];
+	char gamecode[5];
+	char filename[CARD_FILENAMELEN + 1];
 
-	if (id < 0 || id >= cardcount)
+	if (!MCardIsValidSaveIndex(id))
 		return 0;
+	memcpy(company, CardList[id].company, 2);
+	company[2] = '\0';
+	memcpy(gamecode, CardList[id].gamecode, 4);
+	gamecode[4] = '\0';
+	memcpy(filename, CardList[id].filename, CARD_FILENAMELEN);
+	filename[CARD_FILENAMELEN] = '\0';
 
 	err = MountCard(slot);
 	if (err < 0) {
@@ -927,9 +1077,9 @@ int MCardDeleteFile(int slot, int id)
 		return 0;
 	}
 
-	CARD_SetCompany(CardList[id].company);
-	CARD_SetGamecode(CardList[id].gamecode);
-	err = CARD_Delete(slot, (char *)&CardList[id].filename);
+	CARD_SetCompany(company);
+	CARD_SetGamecode(gamecode);
+	err = CARD_Delete(slot, filename);
 	CARD_Unmount(slot);
 
 	if (err < 0) {
@@ -972,60 +1122,6 @@ int MCardFormat(int slot)
 	return 1;
 }
 
-void MC_FormatMode(s32 slot)
-{
-	int erase = 1;
-	int err;
-
-	//0 = B wass pressed -> ask again
-	if (!slot){
-		erase = WaitPromptChoice("Are you sure you want to format memory card in slot A?", "Format", "Cancel");
-	}else{
-		erase = WaitPromptChoice("Are you sure you want to format memory card in slot B?", "Format", "Cancel");
-	}
-
-	if (!erase){
-		if (!slot){
-			erase = WaitPromptChoiceAZ("All contents of memory card in slot A will be erased!", "Format", "Cancel");
-		}else{
-			erase = WaitPromptChoiceAZ("All contents of memory card in slot B will be erased!", "Format", "Cancel");
-		}
-
-		if (!erase)
-		{
-
-			/*** Try to mount the card ***/
-			err = MountCard(slot);
-			if (err < 0)
-			{
-				WaitCardError("MCFormat Mount", err);
-				return; /*** Unable to mount the card ***/
-			}
-			ShowAction("Formatting card...");
-			/*** Format the card ***/
-			CARD_Format(slot);
-			usleep(1000*1000);
-
-			/*** Try to mount the card ***/
-			err = MountCard(slot);
-			if (err < 0)
-			{
-				WaitCardError("MCFormat Mount", err);
-				return; /*** Unable to mount the card ***/
-			}else
-			{
-				WaitPrompt("Format completed successfully");
-			}
-
-				CARD_Unmount(slot);
-				return;
-		}
-	}
-
-	WaitPrompt("Format operation cancelled");
-	return;
-}
-
 //The following code is made by Ralf at GSCentral forums (gscentral.org)
 //http://board.gscentral.org/retro-hacking/53093.htm#post188949
 
@@ -1047,7 +1143,7 @@ s32 FZEROGX_MakeSaveGameValid(s32 chn)
 	u32 serial1,serial2;
 	u16 chksum = 0xFFFF;
 
-	if(strcasecmp(&FileBuffer[0x08],"f_zero.dat")!=0) return CARD_ERROR_READY;		// check for F-Zero GX system file
+	if(strcasecmp((const char *)&FileBuffer[0x08],"f_zero.dat")!=0) return CARD_ERROR_READY;		// check for F-Zero GX system file
 	if((ret=CARD_GetSerialNo(chn,&serial1,&serial2))<0) return ret;			// get encrypted destination memory card serial numbers
 
 	*(u16*)&FileBuffer[0x2066+MCDATAOFFSET] = serial1 >> 16;			// set new serial numbers
@@ -1086,12 +1182,12 @@ s32 PSO_MakeSaveGameValid(s32 chn)
 	u32 serial1,serial2;
 	u32 pso3offset;
 
-	if(strcasecmp(&FileBuffer[0x08],"PSO_SYSTEM")==0) {				// check for PSO1&2 system file
+	if(strcasecmp((const char *)&FileBuffer[0x08],"PSO_SYSTEM")==0) {				// check for PSO1&2 system file
 		pso3offset = 0x00;
 		goto exit;
 	}
 
-	if(strcasecmp(&FileBuffer[0x08],"PSO3_SYSTEM")==0) {				// check for PSO3 system file
+	if(strcasecmp((const char *)&FileBuffer[0x08],"PSO3_SYSTEM")==0) {				// check for PSO3 system file
 		pso3offset = 0x10;							// PSO3 data block size adjustment
 		goto exit;
 	}

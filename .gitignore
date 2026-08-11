@@ -5,6 +5,8 @@
 /build_GC_dark/
 
 /releases/
-
+.env.md
+.env
+test/dolphin/user/
 *.elf
 *.dol

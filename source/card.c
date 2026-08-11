@@ -1670,6 +1670,8 @@ static s32 __card_formatregion(s32 chn,u32 encode,cardcallback callback)
 	u32 cnt;
 	u64 time;
 	u64 rnd_val;
+	u16 chksum1;
+	u16 chksum2;
 	void *workarea,*memblock;
 	cardcallback cb = NULL;
 	card_block *card = NULL;
@@ -1710,18 +1712,22 @@ static s32 __card_formatregion(s32 chn,u32 encode,cardcallback callback)
 	}
 	__SYS_UnlockSramEx(0);
 
-	*(u64*)&(header->serial[3]) = time;
+	memcpy(&header->serial[3], &time, sizeof(time));
 	header->serial[7] = tmp;
 	header->device_id = 0;
 	header->size = card->card_size;
-	__card_checksum((u16*)header,508,&header->chksum1,&header->chksum2);
+	__card_checksum((u16*)header,508,&chksum1,&chksum2);
+	header->chksum1 = chksum1;
+	header->chksum2 = chksum2;
 	
 	cnt = 0;
 	while(cnt<2) {
 		memblock = workarea+((cnt+1)<<13);
 		dircntrl = memblock+8128;
 		memset(memblock,0xff,8192);
-		__card_checksum(memblock,8188,&dircntrl->chksum1,&dircntrl->chksum2);
+		__card_checksum(memblock,8188,&chksum1,&chksum2);
+		dircntrl->chksum1 = chksum1;
+		dircntrl->chksum2 = chksum2;
 		cnt++;
 	}
 
@@ -1733,7 +1739,9 @@ static s32 __card_formatregion(s32 chn,u32 encode,cardcallback callback)
 		fatblock->updated = cnt;
 		fatblock->freeblocks = card->blocks-CARD_SYSAREA;
 		fatblock->lastalloc = 4;
-		__card_checksum(memblock+4,8188,&fatblock->chksum1,&fatblock->chksum2);
+		__card_checksum(memblock+4,8188,&chksum1,&chksum2);
+		fatblock->chksum1 = chksum1;
+		fatblock->chksum2 = chksum2;
 		cnt++;
 	}
 
@@ -1874,6 +1882,8 @@ static void __card_createfatcallback(s32 chn,s32 result)
 static s32 __card_updatefat(s32 chn,struct card_bat *fatblock,cardcallback callback)
 {
 	card_block *card = NULL;
+	u16 chksum1;
+	u16 chksum2;
 #ifdef _CARD_DEBUG
 	printf("__card_updatefat(%d,%p,%p)\n",chn,fatblock,callback);
 #endif
@@ -1883,7 +1893,9 @@ static s32 __card_updatefat(s32 chn,struct card_bat *fatblock,cardcallback callb
 	if(!card->attached) return CARD_ERROR_NOCARD;
 
 	++fatblock->updated;
-	__card_checksum((u16*)(((u32)fatblock)+4),0x1ffc,&fatblock->chksum1,&fatblock->chksum2);
+	__card_checksum((u16*)(((u32)fatblock)+4),0x1ffc,&chksum1,&chksum2);
+	fatblock->chksum1 = chksum1;
+	fatblock->chksum2 = chksum2;
 	DCStoreRange(fatblock,8192);
 	card->card_erase_cb = callback;
 
@@ -1895,6 +1907,8 @@ static s32 __card_updatedir(s32 chn,cardcallback callback)
 	card_block *card = NULL;
 	void *dirblock = NULL;
 	struct card_dircntrl *dircntrl = NULL;
+	u16 chksum1;
+	u16 chksum2;
 #ifdef _CARD_DEBUG
 	printf("__card_updatedir(%d,%p)\n",chn,callback);
 #endif
@@ -1906,7 +1920,9 @@ static s32 __card_updatedir(s32 chn,cardcallback callback)
 	dirblock = __card_getdirblock(card);
 	dircntrl = dirblock+8128;
 	++dircntrl->updated;
-	__card_checksum((u16*)dirblock,0x1ffc,&dircntrl->chksum1,&dircntrl->chksum2);
+	__card_checksum((u16*)dirblock,0x1ffc,&chksum1,&chksum2);
+	dircntrl->chksum1 = chksum1;
+	dircntrl->chksum2 = chksum2;
 	DCStoreRange(dirblock,8192);
 	card->card_erase_cb = callback;
 	
@@ -2741,7 +2757,8 @@ s32 CARD_CreateAsync(s32 chn,const char *filename,u32 size,card_file *file,cardc
 	card->card_api_cb = cb;
 	
 	entry[filenum].length = size/card->sector_size;
-	strncpy((char*)entry[filenum].filename,filename,CARD_FILENAMELEN);
+	memset(entry[filenum].filename,0,CARD_FILENAMELEN);
+	memcpy(entry[filenum].filename,filename,len);
 	
 	card->curr_file = file;
 	file->chn = chn;

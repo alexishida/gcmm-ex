@@ -22,15 +22,8 @@ DKV		:= $(or $(DKV),0)
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
-THEME		?=	-DLIGHT_MODE
-
-ifeq ($(filter -DDARK_MODE,$(THEME)),-DDARK_MODE)
-TARGET		:=	gcmm_GC_dark
-BUILD		:=	build_GC_dark
-else
 TARGET		:=	gcmm_GC
 BUILD		:=	build_GC
-endif
 
 SOURCES		:=	source source/aram
 DATA		:=	data data-gc
@@ -42,7 +35,7 @@ INCLUDES	:=
 
 # -std=gnu17: this codebase predates C23, where an empty () parameter list means
 # "takes no arguments" instead of "unspecified". gcc 15+ defaults to C23.
-CFLAGS	= -g -O2 -Wall -std=gnu17 $(MACHDEP) $(INCLUDE) -DDEVKITPPCVER=$(DKV) $(THEME)
+CFLAGS	= -g -O2 -Wall -std=gnu17 $(MACHDEP) $(INCLUDE) -DDEVKITPPCVER=$(DKV)
 CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map

@@ -196,6 +196,46 @@ u32 ShowBMP(u8 * bmpfile) {
     return 1;
 }
 
+/* Draw an even-width 24-bit BMP onto the current framebuffer without
+ * changing framebuffers. Used for small UI artwork over the shared backdrop. */
+u32 DrawBMPAt(u8 *bmpfile, int x, int y)
+{
+	WINBITMAP *bitmap = (WINBITMAP *)bmpfile;
+	u32 width;
+	u32 height;
+	u32 row_stride;
+	u32 rows;
+	u32 cols;
+	u8 *bgr;
+	u32 fboffset;
+
+	if (!bmpfile || memcmp(&bitmap->bfMagic, "BM", 2) ||
+		FLIP16(bitmap->biPlanes) != 1 ||
+		FLIP16(bitmap->biBitsPerPixel) != 24 ||
+		FLIP32(bitmap->biCompression) != 0)
+		return 0;
+	width = FLIP32(bitmap->biWidth);
+	height = FLIP32(bitmap->biHeight);
+	if ((width & 1) || x < 0 || y < 0 || width > 640 ||
+		height > vmode->xfbHeight || x > 640 - (int)width ||
+		y > (int)vmode->xfbHeight - (int)height)
+		return 0;
+
+	row_stride = (width * 3 + 3) & ~3U;
+	bgr = bmpfile + FLIP32(bitmap->bfOffset);
+	fboffset = (u32)y * 320 + (u32)x / 2 + (height - 1) * 320;
+	for (rows = 0; rows < height; rows++) {
+		u8 *row = bgr + rows * row_stride;
+		for (cols = 0; cols < width / 2; cols++) {
+			xfb[whichfb][fboffset + cols] = CvtRGB(row[2], row[1], row[0],
+				row[5], row[4], row[3]);
+			row += 6;
+		}
+		fboffset -= 320;
+	}
+	return 1;
+}
+
 /***
 	ShowBanner is ShowBMP but modified to be simpler. We don't need to
 	check for a header since we generated the bmp BGR values directly for each save game.

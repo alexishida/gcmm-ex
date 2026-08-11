@@ -1,22 +1,30 @@
 # Changelog
 
-All notable changes inherited from the original GCMM project are documented in this file.
+This file documents GCMM-EX changes and the historical GCMM change history.
 
-GCMM-EX is a community fork of [suloku's GCMM](https://github.com/suloku/gcmm), focused on updating the codebase and improving compatibility with current toolchains, devices, filesystems, and future features. Historical entries below were rewritten in U.S. English from [`readme-original.txt`](readme-original.txt) while preserving their original meaning, dates, and contributor credits.
+GCMM-EX is based on [suloku's GCMM](https://github.com/suloku/gcmm), with a redesigned codebase and support for current toolchains, devices, filesystems, and future features. Historical entries below were rewritten in U.S. English from [`readme-original.txt`](readme-original.txt) while preserving their original meaning, dates, and contributor credits.
 
 ## [Unreleased]
 
 ### Added
 
 - Added exFAT support for every storage device: Wii SD, Wii USB, SD Gecko, SD2SP2, and GC Loader. Cards larger than 32 GB no longer need to be reformatted as FAT32.
+- Added task-oriented home, settings, memory-card selection, save details, and
+  contextual save actions.
+- Added guided full-card and single-save GCI backup, card-to-card copy, move,
+  batch deletion, and GCI/GCS/SAV restore flows with progress and results.
 
 ### Changed
 
-- Replaced libfat with Extrems' libdvm fork, which bundles FatFs and supports FAT12, FAT16, FAT32, and exFAT. libdvm is now a build requirement.
+- Renamed the application to GCMM-EX and credited Alex Ishida as author.
+- Replaced libfat with Extrems' libdvm, which bundles FatFs and supports FAT12, FAT16, FAT32, and exFAT. libdvm is now a build requirement.
 - Changed device mounting to probe partition tables and select the matching filesystem driver instead of assuming FAT. Devices whose first partition is unsupported or uses another filesystem can now be handled correctly.
 - Changed final build output paths. DOL and ELF files are now written to the root-level `releases/` directory.
-- Split light and dark builds into separate intermediate directories. Dark theme outputs now use the `_dark` filename suffix to prevent collisions and stale object reuse.
+- Simplified builds to one visual theme and one output per platform; removed legacy themed build variants and background inputs.
 - Rewrote the main README in U.S. English and documented the current build output layout.
+- Replaced normal-operation shortcut dispatch with consistent navigation:
+  D-pad/analog navigation, A confirmation, B cancellation, X actions, Y
+  marking, L/R device changes, and Start/HOME help.
 
 ### Fixed
 

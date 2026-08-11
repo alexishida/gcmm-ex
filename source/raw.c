@@ -54,8 +54,15 @@ s8 erase_data = 0;
 Header cardheader;
 
 extern u8 currFolder[260];
-extern int folderCount;
 extern char fatpath[8];
+
+static int raw_storage_entry_name_is_safe(const char *name)
+{
+	if (!name || !name[0] || strnlen(name, 1024) >= 1024)
+		return 0;
+	return strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
+		strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
+}
 
 extern syssram* __SYS_LockSram();
 extern syssramex* __SYS_LockSramEx();
@@ -145,7 +152,7 @@ u64 Card_SerialNo(s32 slot)
 	usleep(10*1000);
 	
 	err = CARD_GetSectorSize(slot,&SectorSize);
-	if(err < 0 )
+	if(err < 0 || SectorSize == 0 || SectorSize % 32 != 0)
 	{
 		WaitCardError("SerialNo Sectsize", err);
 		CARD_Unmount(slot);
@@ -244,7 +251,8 @@ void time2name(char *name)
 s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 {
 	int err;
-	char filename[256];
+	int length;
+	char filename[1024];
 	char msg[128+256];
 	char msg2[128+256];
 	msg2[0] = '\0';
@@ -265,7 +273,7 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	usleep(10*1000);
 	
 	err = CARD_GetSectorSize(slot,&SectorSize);
-	if(err < 0 )
+	if(err < 0 || SectorSize == 0 || SectorSize % 32 != 0)
 	{
 		WaitCardError("BakRaw Sectsize", err);
 		CARD_Unmount(slot);
@@ -289,18 +297,35 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	}
 	s32 current_block = 0;
 	int read = 0;
-	s32 writen = 0;
+	s32 total_written = 0;
 	char name[64];
 	int filenumber = 1;
 	
-	sprintf (filename, "%s:/%s", fatpath, MCSAVES);
+	length = snprintf(filename, sizeof(filename), "%s:/%s", fatpath, MCSAVES);
+	if (length < 0 || length >= (int)sizeof(filename)) {
+		mem_free(CardBuffer);
+		CARD_Unmount(slot);
+		return -1;
+	}
 	mkdir(filename, S_IREAD | S_IWRITE);	
 	
 	time2name(name);
-	sprintf (filename, "%s:/%s/%04db_%s.raw", fatpath, MCSAVES, BlockCount-5, name);
+	length = snprintf(filename, sizeof(filename), "%s:/%s/%04db_%s.raw",
+		fatpath, MCSAVES, BlockCount - 5, name);
+	if (length < 0 || length >= (int)sizeof(filename)) {
+		mem_free(CardBuffer);
+		CARD_Unmount(slot);
+		return -1;
+	}
 	//not really needed because the filename has seconds in it and the same filename will "never" happen
 	while (file_exists(filename)){
-		sprintf (filename, "%s:/%s/%04db_%s_%02d.raw", fatpath, MCSAVES, BlockCount-5, name, filenumber);
+		length = snprintf(filename, sizeof(filename), "%s:/%s/%04db_%s_%02d.raw",
+			fatpath, MCSAVES, BlockCount - 5, name, filenumber);
+		if (length < 0 || length >= (int)sizeof(filename)) {
+			mem_free(CardBuffer);
+			CARD_Unmount(slot);
+			return -1;
+		}
 		filenumber++;
 	}	
 	dumpFd = fopen(filename,"wb");
@@ -319,7 +344,8 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 		read_data = 0;//Reset read_callback
 		card_addr = SectorSize*current_block;
 		//printf("\rReading : %u bytes of %u (block %d)...",read,BlockCount*SectorSize,current_block);
-		sprintf(msg, "Reading...: Block %d of %d (%u bytes of %u)",current_block,BlockCount,read,BlockCount*SectorSize);
+		snprintf(msg, sizeof(msg), "Reading...: Block %d of %d (%u bytes of %u)",
+			current_block, BlockCount, read, BlockCount * SectorSize);
 		writeStatusBar(msg, msg2);
 		//memset(CardBuffer, 0xFF, SectorSize);//Reset buffer. In GC memory card bytes are set to 0xFF when erasing.
 		DCInvalidateRange(CardBuffer,SectorSize);
@@ -347,26 +373,85 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 			//printf("\n");
 			//u8* ptr = (u8*)CardBuffer;
 			//fwrite((u8*)ptr,SectorSize,1,dumpFd);
-			fwrite(CardBuffer,SectorSize,1,dumpFd);
-			//writen += SectorSize;
+			if (fwrite(CardBuffer, 1, SectorSize, dumpFd) != SectorSize) {
+				fclose(dumpFd);
+				mem_free(CardBuffer);
+				WaitPrompt("RAW backup write failed.");
+				CARD_Unmount(slot);
+				return -1;
+			}
+			total_written += SectorSize;
 			if(bytes_writen != NULL)
-				*bytes_writen += SectorSize;
+				*bytes_writen = total_written;
 			//printf("\rWriting : %u bytes of %u",writen+SectorSize,read);
-			sprintf(msg2, "Writing...: Block %d of %d (%u bytes of %u)",current_block,BlockCount,*bytes_writen,BlockCount*SectorSize);
+			snprintf(msg2, sizeof(msg2),
+				"Writing...: Block %d of %d (%d bytes of %u)", current_block,
+				BlockCount, total_written, BlockCount * SectorSize);
 			writeStatusBar(msg, msg2);
 	}
 
-	fclose(dumpFd);
+	if (fflush(dumpFd) != 0 || fclose(dumpFd) != 0) {
+		mem_free(CardBuffer);
+		CARD_Unmount(slot);
+		WaitPrompt("RAW backup could not be finalized.");
+		return -1;
+	}
 
 	mem_free(CardBuffer);
 	CARD_Unmount(slot);
 	return 1;
 }
 
+/* Validate image size against destination before any destructive confirmation.
+   RAW images have no common header; a size match is their format boundary. */
+int ValidateRawImage(s32 slot, const char *sdfilename, u32 *image_size)
+{
+	FILE *dumpFd;
+	char filename[1024];
+	long size;
+	u32 sector_size = 0;
+	u16 block_count = 0;
+	int err;
+	int valid;
+
+	if (!raw_storage_entry_name_is_safe(sdfilename) ||
+		strnlen((char *)currFolder, sizeof(currFolder)) >= sizeof(currFolder))
+		return 0;
+	err = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath,
+		currFolder, sdfilename);
+	if (err < 0 || err >= (int)sizeof(filename))
+		return 0;
+	dumpFd = fopen(filename, "rb");
+	if (!dumpFd)
+		return 0;
+	if (fseek(dumpFd, 0, SEEK_END) != 0 || (size = ftell(dumpFd)) < 0) {
+		fclose(dumpFd);
+		return 0;
+	}
+	fclose(dumpFd);
+
+	err = MountCard(slot);
+	if (err < 0)
+		return 0;
+	err = CARD_GetSectorSize(slot, &sector_size);
+	if (err >= 0)
+		err = CARD_GetBlockCount(slot, &block_count);
+	CARD_Unmount(slot);
+	if (err < 0 || sector_size == 0 || block_count == 0)
+		return 0;
+	valid = size == (long)block_count * sector_size ||
+		size == (long)block_count * sector_size + 64;
+	if (!valid)
+		return 0;
+	if (image_size)
+		*image_size = (u32)size;
+	return 1;
+}
+
 s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 {
 	FILE *dumpFd = 0;
-	char filename[256];
+	char filename[1024];
 	char msg[128+256];
 	int err;
 	u32 SectorSize = 0;
@@ -374,6 +459,10 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 	s32 current_block = 0;
 	s32 writen = 0;
 	s32 write_addr = 0;
+	long lSize;
+	if (!raw_storage_entry_name_is_safe(sdfilename) ||
+		strnlen((char *)currFolder, sizeof(currFolder)) >= sizeof(currFolder))
+		return -1;
 	
 	err = MountCard(slot);
 	if (err < 0)
@@ -385,7 +474,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 	usleep(10*1000);
 	
 	err = CARD_GetSectorSize(slot,&SectorSize);
-	if(err < 0 )
+	if(err < 0 || SectorSize == 0 || SectorSize % 32 != 0)
 	{
 		WaitCardError("RestRaw Sectsize", err);
 		CARD_Unmount(slot);
@@ -393,7 +482,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 	}
 
 	err = CARD_GetBlockCount(slot,&BlockCount);
-	if(err < 0 )
+	if(err < 0 || BlockCount == 0)
 	{
 		WaitCardError("RestRaw Blockcount", err);
 		CARD_Unmount(slot);
@@ -430,7 +519,18 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 
 
 	/*** Make fullpath filename ***/
-	sprintf (filename, "%s:/%s/%s", fatpath, currFolder, sdfilename);
+	err = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath, currFolder,
+		sdfilename);
+	if (err < 0 || err >= (int)sizeof(filename)) {
+		mem_free(CardBuffer);
+#ifdef DEBUGRAW
+		mem_free(CheckBuffer);
+		mem_free(EraseCheckBuffer);
+#endif
+		WaitPrompt("Raw restore path is too long.");
+		CARD_Unmount(slot);
+		return -1;
+	}
 
 	/*** Open the SD Card file ***/
 	dumpFd = fopen ( filename , "rb" );
@@ -441,21 +541,29 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 		mem_free(CheckBuffer);
 		mem_free(EraseCheckBuffer);
 #endif
-		sprintf(msg, "Couldn't open %s", filename);		
+		snprintf(msg, sizeof(msg), "Couldn't open %.350s", filename);
 		WaitPrompt (msg);
 		CARD_Unmount(slot);
 		return -1;
 	}
 
 	//first read the content of the SD dump into the buffer.
-	u32 lSize;
-	fseek (dumpFd , 0 , SEEK_END);
-	lSize = ftell (dumpFd);
-	rewind (dumpFd);
-	if(lSize != BlockCount*SectorSize)
+	if (fseek(dumpFd, 0, SEEK_END) != 0 || (lSize = ftell(dumpFd)) < 0 ||
+		fseek(dumpFd, 0, SEEK_SET) != 0) {
+		fclose(dumpFd);
+		mem_free(CardBuffer);
+#ifdef DEBUGRAW
+		mem_free(CheckBuffer);
+		mem_free(EraseCheckBuffer);
+#endif
+		WaitPrompt("Could not determine RAW image size.");
+		CARD_Unmount(slot);
+		return -1;
+	}
+	if (lSize != (long)BlockCount * SectorSize)
 	{
 		//check for mci raw image
-		if((lSize-64) != BlockCount*SectorSize){
+		if (lSize - 64 != (long)BlockCount * SectorSize) {
 			//incorrect dump size D:<
 			fclose(dumpFd);
 			mem_free(CardBuffer);
@@ -468,29 +576,21 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 			return -1;
 		}
 	}
-	//printf("are you -SURE- you want to recover? a faulty backup or even a program\nfailure will corrupt the memory card!\n");
-
-	int erase = 1;
-	//0 = B wass pressed -> ask again
-	if (!slot){
-		erase = WaitPromptChoice("Are you -SURE- you want to restore to memory card in slot A?", "Restore", "Cancel");
-	}else{
-		erase = WaitPromptChoice("Are you -SURE- you want to restore to memory card in slot B?", "Restore", "Cancel");
-	}
-	
-	if (!erase)
-	{
-		if (!slot){
-			erase = WaitPromptChoiceAZ("All contents of memory card in slot A will be overwritten, continue?", "Restore", "Cancel");
-		}else{
-			erase = WaitPromptChoiceAZ("All contents of memory card in slot B will be erased, continue?", "Restore", "Cancel");
-		}
-
-		if (!erase)//Actual restore starts here
-		{
+	/* Caller has already validated the image and completed two confirmations. */
 			//ShowAction ("Reading data...");
 			//If it's a MCI image, skip the header
-			if ((lSize-64) == BlockCount*SectorSize) fseek(dumpFd, 64, SEEK_SET);
+			if (lSize - 64 == (long)BlockCount * SectorSize &&
+				fseek(dumpFd, 64, SEEK_SET) != 0) {
+				fclose(dumpFd);
+				mem_free(CardBuffer);
+#ifdef DEBUGRAW
+				mem_free(CheckBuffer);
+				mem_free(EraseCheckBuffer);
+#endif
+				WaitPrompt("Could not seek past the MCI header.");
+				CARD_Unmount(slot);
+				return -1;
+			}
 			
 			s32 upblock = 0;
 			s32 write_len = SectorSize;
@@ -510,7 +610,17 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 				if( (err != 0) || current_block >= BlockCount || writen == BlockCount*SectorSize)
 					break;
 			
-				fread(CardBuffer,SectorSize,1,dumpFd);
+				if (fread(CardBuffer, 1, SectorSize, dumpFd) != SectorSize) {
+					fclose(dumpFd);
+					mem_free(CardBuffer);
+	#ifdef DEBUGRAW
+					mem_free(CheckBuffer);
+					mem_free(EraseCheckBuffer);
+	#endif
+					WaitPrompt("RAW restore read failed.");
+					CARD_Unmount(slot);
+					return -1;
+				}
 				//fclose(dumpFd);
 /*
 //Test code to see if raw image is correctly read
@@ -526,7 +636,9 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 				//ShowAction ("Writing data to memory card...");
 				
 				//printf("\rWriting... : %d of %d (block %d)",writen,BlockCount*SectorSize,current_block);
-				sprintf(msg, "Writing...: Block %d of %d (%d of %d)",current_block,BlockCount,writen,BlockCount*SectorSize);
+				snprintf(msg, sizeof(msg),
+					"Writing...: Block %d of %d (%d of %u)", current_block,
+					BlockCount, writen, BlockCount * SectorSize);
 				ShowAction (msg);
 				//gprintf("\rWriting... : %d of %d (block %d of %d)",writen,BlockCount*SectorSize,current_block,BlockCount);
 				
@@ -650,10 +762,15 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 
 							//Uncomment to dump contents that where read
 							char checkdump[64];
-							sprintf(checkdump, "%s:/check_dump.bin", fatpath);
+							snprintf(checkdump, sizeof(checkdump), "%s:/check_dump.bin",
+								fatpath);
 							FILE* dump = fopen(checkdump,"wb");
-							fwrite(CheckBuffer,1,write_len,dump);
-							fclose(dump);
+							if (dump) {
+								if (fwrite(CheckBuffer, 1, write_len, dump) !=
+									(size_t)write_len)
+									WaitPrompt("Could not write RAW verification dump.");
+								fclose(dump);
+							}
 							
 							//Cleanup
 							fclose(dumpFd);
@@ -728,11 +845,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 			mem_free(EraseCheckBuffer);
 	#endif		
 			CARD_Unmount(slot);
-			return 1;		
-		}
-	//User canceled restore (2nd prompt)
-	}
-//User canceled restore (1st prompt)
+			return 1;
 
 //Clean
 	mem_free(CardBuffer);

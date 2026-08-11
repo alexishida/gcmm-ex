@@ -41,13 +41,56 @@ extern int lastframe;
 extern int lasticon;
 
 extern u8 filelist[1024][1024];
-extern u32 maxfile;
 extern card_direntry gci;
-extern int OFFSET;
+int OFFSET = 0;
 
 extern u8 currFolder[260];
-extern int folderCount;
 extern char fatpath[8];
+
+static int get_file_size(FILE *handle, long *size)
+{
+	long result;
+
+	if (!handle || !size || fseek(handle, 0, SEEK_END) != 0)
+		return 0;
+	result = ftell(handle);
+	if (result < 0 || fseek(handle, 0, SEEK_SET) != 0)
+		return 0;
+	*size = result;
+	return 1;
+}
+
+static int read_file_range(FILE *handle, long file_size, long offset,
+	void *destination, size_t length)
+{
+	if (!handle || !destination || file_size < 0 || offset < 0 ||
+		offset > file_size || length > (size_t)(file_size - offset) ||
+		fseek(handle, offset, SEEK_SET) != 0)
+		return 0;
+	return fread(destination, 1, length, handle) == length;
+}
+
+static int read_file_range_advance(FILE *handle, long file_size, long *offset,
+	void *destination, size_t length)
+{
+	if (!offset || !read_file_range(handle, file_size, *offset, destination, length))
+		return 0;
+	*offset += (long)length;
+	return 1;
+}
+
+static int storage_entry_name_is_safe(const char *name)
+{
+	if (!name || !name[0] || strnlen(name, 1024) >= 1024)
+		return 0;
+	return strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
+		strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
+}
+
+static int storage_folder_is_safe(void)
+{
+	return strnlen((char *)currFolder, sizeof(currFolder)) < sizeof(currFolder);
+}
 
 bool file_exists(const char * filename)
 {
@@ -71,9 +114,11 @@ int SDSaveMCImage ()
 	//sd_file *handle;
 	FILE *handle;
 	card_direntry thisgci;
-	int check;
+	long check;
+	size_t written;
 	int filenumber = 0;
 	int retries = 0;
+	int filename_length;
 
 	/*** Make a copy of the Card Dir ***/
 	memcpy (&thisgci, FileBuffer, sizeof (card_direntry));
@@ -84,18 +129,29 @@ int SDSaveMCImage ()
 	memcpy (gamecode, &thisgci.gamecode, 4);
 	memcpy (tfile, &thisgci.filename, CARD_FILENAMELEN);
 
-	sprintf (filename, "%s:/%s", fatpath, MCSAVES);
+	filename_length = snprintf(filename, sizeof(filename), "%s:/%s", fatpath,
+		MCSAVES);
+	if (filename_length < 0 || filename_length >= (int)sizeof(filename))
+		return 0;
 
 	mkdir(filename, S_IREAD | S_IWRITE);
 
-	sprintf (filename, "%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode, tfile, filenumber);
+	filename_length = snprintf(filename, sizeof(filename),
+		"%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode,
+		tfile, filenumber);
+	if (filename_length < 0 || filename_length >= (int)sizeof(filename))
+		return 0;
 
 	//Lets try if there's already a savegame (if it exists its name is legal, so theoretically the illegal name check will pass
 	//Illegal savegame should report as nonexisting...
 	//We will number the files
 	while (file_exists(filename)){
-		sprintf (filename, "%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode, tfile, filenumber);
 		filenumber++;
+		filename_length = snprintf(filename, sizeof(filename),
+			"%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode,
+			tfile, filenumber);
+		if (filename_length < 0 || filename_length >= (int)sizeof(filename))
+			return 0;
 	}
 
 	//filename[128] = 0; // limit filename length, there's a bug where a file is exported as DOS-type shortname ("8P-GPO~2.GCI") which I assume happens if the name is too long...? Nope that's not it.
@@ -108,29 +164,48 @@ int SDSaveMCImage ()
 		if (handle <= 0)
 		{
 			// couldn't open file, probably either card full or filename illegal; let's assume illegal filename and retry
-			sprintf (filename, "%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode, "illegal_name", filenumber);
+			filename_length = snprintf(filename, sizeof(filename),
+				"%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company,
+				gamecode, "illegal_name", filenumber);
+			if (filename_length < 0 || filename_length >= (int)sizeof(filename))
+				return 0;
 			//let's see again if there aren't any saves already...
-			filenumber = 1;
+			filenumber = 0;
 			while (file_exists(filename)){
-				sprintf (filename, "%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company, gamecode, "illegal_name", filenumber);
 				filenumber++;
+				filename_length = snprintf(filename, sizeof(filename),
+					"%s:/%s/%s-%s-%s_%02d.gci", fatpath, MCSAVES, company,
+					gamecode, "illegal_name", filenumber);
+				if (filename_length < 0 || filename_length >= (int)sizeof(filename))
+					return 0;
 			}
 			//filename[128] = 0;
 			handle = fopen ( filename , "wb" );
 			if (handle <= 0)
 			{
 				char msg[100];
-				sprintf(msg, "Couldn't open %s", filename);
+				snprintf(msg, sizeof(msg), "Couldn't open %.84s", filename);
 				WaitPrompt (msg);
 				return 0;
 			}
 		}
 
-		bytesToWrite = (thisgci.length * 8192) + MCDATAOFFSET;
+		if (thisgci.length == 0 ||
+			thisgci.length > (MAXFILEBUFFER - MCDATAOFFSET) / 8192) {
+			fclose(handle);
+			return 0;
+		}
+		bytesToWrite = (int)thisgci.length * 8192 + MCDATAOFFSET;
 		//SDCARD_WriteFile (handle, FileBuffer, bytesToWrite);
 		//SDCARD_CloseFile (handle);
-		fwrite (FileBuffer , 1 , bytesToWrite , handle );
-		fclose (handle);
+		written = fwrite(FileBuffer, 1, bytesToWrite, handle);
+		if (written != bytesToWrite || fflush(handle) != 0)
+		{
+			fclose(handle);
+			return 0;
+		}
+		if (fclose(handle) != 0)
+			return 0;
 
 		// check if file actually wrote correctly
 		handle = fopen ( filename , "rb" );
@@ -140,14 +215,16 @@ int SDSaveMCImage ()
 			retries ++;
 			continue;
 		}
-		fseek (handle , 0 , SEEK_END);
-		check = ftell (handle);
+		if (!get_file_size(handle, &check)) {
+			fclose(handle);
+			return 0;
+		}
 		fclose(handle);
-		if ( check > 0 ) {
-			// if filesize is bigger than 0, we can assume the file wrote correctly, break out of loop
-			// ... this will end in an endless loop if the file to write is 0 bytes but that's very unlikely
+		if (check == bytesToWrite) {
+			/* A backup is valid only when its on-disk size matches the GCI header. */
 			break;
 		}
+		retries++;
 
 		//Try 10 times if needed, then give up. Better to avoid endless looping
 		if (retries > 9)
@@ -170,6 +247,9 @@ int SDLoadMCImage(char *sdfilename)
 	//int offset = 0;
 	//int bytesToRead = 0;
 	long bytesToRead = 0;
+	long normalized_size;
+	u16 block_count;
+	int path_length;
 
 	/*** Clear the work buffers ***/
 	memset (FileBuffer, 0, MAXFILEBUFFER);
@@ -177,7 +257,12 @@ int SDLoadMCImage(char *sdfilename)
 
 	/*** Make fullpath filename ***/
 	//sprintf (filename, "dev0:\\%s\\%s", MCSAVES, sdfilename);
-	sprintf (filename, "%s:/%s/%s", fatpath, currFolder, sdfilename);
+	if (!storage_entry_name_is_safe(sdfilename) || !storage_folder_is_safe())
+		return 0;
+	path_length = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath,
+		currFolder, sdfilename);
+	if (path_length < 0 || path_length >= (int)sizeof(filename))
+		return 0;
 
 	//SDCARD_Init ();
 
@@ -189,9 +274,9 @@ int SDLoadMCImage(char *sdfilename)
 	/*** Open the SD Card file ***/
 	//handle = SDCARD_OpenFile (filename, "rb");
 	handle = fopen ( filename , "rb" );
-	if (handle <= 0)
+	if (!handle)
 	{
-		sprintf(msg, "Couldn't open %s", filename);
+		snprintf(msg, sizeof(msg), "Couldn't open %.230s", filename);
 		WaitPrompt (msg);
 		return 0;
 	}
@@ -203,23 +288,35 @@ int SDLoadMCImage(char *sdfilename)
 	    }*/
 
 	// obtain file size:
-	fseek (handle , 0 , SEEK_END);
-	bytesToRead = ftell (handle);
-	rewind (handle);
+	if (!get_file_size(handle, &bytesToRead)) {
+		fclose(handle);
+		WaitPrompt("Could not determine backup file size.");
+		return 0;
+	}
 
 	//bytesToRead = SDCARD_GetFileSize(handle);
 	if (bytesToRead <= 0)
 	{
 		sprintf(msg, "Incorrect file size %ld .", bytesToRead);
 		WaitPrompt (msg);
-		//WaitPrompt("Incorrect file size.");
+		fclose(handle);
 		return 0;
 	}
-	fseek (handle , OFFSET , SEEK_SET);
+	if (OFFSET < 0 || OFFSET >= bytesToRead ||
+		bytesToRead - OFFSET < MCDATAOFFSET ||
+		bytesToRead - OFFSET > MAXFILEBUFFER) {
+		WaitPrompt("Backup file is too large or has an invalid header offset.");
+		fclose(handle);
+		return 0;
+	}
 	/*** Read the file ***/
 	//SDCARD_ReadFile (handle, FileBuffer, bytesToRead);
-	fread (FileBuffer,1,bytesToRead,handle);
-
+	if (!read_file_range(handle, bytesToRead, OFFSET, FileBuffer,
+		(size_t)(bytesToRead - OFFSET))) {
+		fclose(handle);
+		WaitPrompt("Could not read complete backup file.");
+		return 0;
+	}
 	if(OFFSET == 0x80)
 	{
 		// swap byte pairs
@@ -241,6 +338,17 @@ int SDLoadMCImage(char *sdfilename)
 			i++;
 		}
 	}
+	normalized_size = bytesToRead - OFFSET;
+	block_count = (u16)(FileBuffer[0x38] << 8) | FileBuffer[0x39];
+	if (block_count == 0 ||
+		block_count > (MAXFILEBUFFER - MCDATAOFFSET) / 8192 ||
+		normalized_size != MCDATAOFFSET + (long)block_count * 8192) {
+		fclose(handle);
+		WaitPrompt("Backup file length does not match its header.");
+		return 0;
+	}
+	/* FileBuffer now always begins with a normalized GCI header. */
+	OFFSET = 0;
 	//sprintf(msg, "Offset: %d", bytesToRead);
 	//WaitPrompt (msg);
 	/*** Close the file ***/
@@ -260,84 +368,92 @@ int SDLoadMCImageHeader(char *sdfilename)
 	//int bytesToRead = 0;
 	long bytesToRead = 0;
 	int i;
+	int path_length;
 
 	/*** Clear the work buffers ***/
 	memset (FileBuffer, 0, MAXFILEBUFFER);
 	memset (CommentBuffer, 0, 64);
 
 	/*** Make fullpath filename ***/
-	sprintf (filename, "%s:/%s/%s", fatpath, currFolder, sdfilename);
+	if (!storage_entry_name_is_safe(sdfilename) || !storage_folder_is_safe())
+		return 0;
+	path_length = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath,
+		currFolder, sdfilename);
+	if (path_length < 0 || path_length >= (int)sizeof(filename))
+		return 0;
 
 
 	/*** Open the SD Card file ***/
 	//handle = SDCARD_OpenFile (filename, "rb");
 	handle = fopen ( filename , "rb" );
-	if (handle <= 0)
+	if (!handle)
 	{
-		sprintf(msg, "Couldn't open %s", filename);
+		snprintf(msg, sizeof(msg), "Couldn't open %.230s", filename);
 		WaitPrompt (msg);
 		return 0;
 	}
 
 	// obtain file size:
-	fseek (handle , 0 , SEEK_END);
-	bytesToRead = ftell (handle);
-	rewind (handle);
+	if (!get_file_size(handle, &bytesToRead)) {
+		fclose(handle);
+		WaitPrompt("Could not determine backup file size.");
+		return 0;
+	}
 	if (bytesToRead < 64) //We don't want to read something smaller than the header
 	{
-		sprintf(msg, "Incorrect file size %ld . Not GCI File", bytesToRead);
+		snprintf(msg, sizeof(msg), "Incorrect file size %ld. Not GCI file.", bytesToRead);
 		WaitPrompt (msg);
-		//WaitPrompt("Incorrect file size.");
+		fclose(handle);
 		return 0;
 	}
 
 	OFFSET = 0;
 	char tmp[0xD];
-	char fileType[1024];
-
-	char * dot;
-	int pos = 4;
+	char fileType[4];
+	char *dot;
 	dot = strrchr(filename,'.');
-	strncpy(fileType, dot+1,pos);
-	fileType[pos]='\0';
-
-	if(strcasecmp(fileType, "gci"))
-	{
-		fread(&tmp, 1, 0xD, handle);
-		rewind(handle);
-		if (!strcasecmp(fileType, "gcs"))
-		{
-			if (!memcmp(&tmp, "GCSAVE", 6))	// Header must be uppercase
-			{
-				OFFSET = 0x110;
-			}
-			else
-			{
-				WaitPrompt ("Incorrect Header. Not GCS File");
-				return 0;
-			}
+	if (!dot || !dot[1]) {
+		fclose(handle);
+		WaitPrompt("Backup file has no supported extension.");
+		return 0;
+	}
+	if (strlen(dot + 1) != 3) {
+		fclose(handle);
+		WaitPrompt("Backup file has an unsupported extension.");
+		return 0;
+	}
+	memcpy(fileType, dot + 1, 3);
+	fileType[3] = '\0';
+	if (!strcasecmp(fileType, "gci")) {
+		OFFSET = 0;
+	} else {
+		if (!read_file_range(handle, bytesToRead, 0, tmp, sizeof(tmp))) {
+			fclose(handle);
+			WaitPrompt("Backup file header is truncated.");
+			return 0;
 		}
-		else
-		{
-			if (!strcasecmp(fileType, "sav"))
-			{
-				if (!memcmp(tmp, "DATELGC_SAVE", 0xC)) // Header must be uppercase
-				{
-					OFFSET = 0x80;
-				}
-				else
-				{
-					WaitPrompt ("Incorrect Header. Not SAV File");
-					return 0;
-				}
-			}
+		if (!strcasecmp(fileType, "gcs") && !memcmp(tmp, "GCSAVE", 6)) {
+			OFFSET = 0x110;
+		} else if (!strcasecmp(fileType, "sav") &&
+			!memcmp(tmp, "DATELGC_SAVE", 0xC)) {
+			OFFSET = 0x80;
+		} else {
+			fclose(handle);
+			WaitPrompt("Backup type or header is not supported.");
+			return 0;
 		}
 	}
-	else OFFSET = 0;
-	fseek(handle, OFFSET, SEEK_SET);
+	if (OFFSET < 0 || bytesToRead < OFFSET + (long)sizeof(card_direntry) ||
+		bytesToRead - OFFSET > MAXFILEBUFFER ||
+		(bytesToRead - OFFSET - sizeof(card_direntry)) % 0x2000 != 0 ||
+		!read_file_range(handle, bytesToRead, OFFSET, FileBuffer,
+			sizeof(card_direntry))) {
+		fclose(handle);
+		WaitPrompt("Backup has an invalid size or truncated header.");
+		return 0;
+	}
 
 	/*** Read the file header ***/
-	fread (FileBuffer,1,sizeof(card_direntry),handle);
 
 	u16 length = (bytesToRead - OFFSET - sizeof(card_direntry)) / 0x2000;
 	switch(OFFSET)
@@ -382,8 +498,9 @@ int SDLoadMCImageHeader(char *sdfilename)
 	u16 l2 =(u16)(FileBuffer[0x38] << 8) | FileBuffer[0x39];
 	if (length !=  l2)
 	{
-		sprintf(msg, "File length does not equal file size. Wrong extension? (l1 = %x l2 = %x)", length,l2);
+		snprintf(msg, sizeof(msg), "File length mismatch (file %x, header %x).", length, l2);
 		WaitPrompt (msg);//"File Length does not equal filesize");
+		fclose(handle);
 		return 0;
 	}
 
@@ -400,17 +517,28 @@ int SDLoadMCImageHeader(char *sdfilename)
 		Get the Banner/Icon Data from the SD save file.
 		Very specific if/else setup to avoid rewinds
 	***/
-	rewind(handle);
-	fseek(handle, MCDATAOFFSET + OFFSET + gci.icon_addr, SEEK_SET);
+	long data_start = MCDATAOFFSET + OFFSET;
+	long visual_offset;
+	if (data_start > bytesToRead || gci.icon_addr > (u32)(bytesToRead - data_start)) {
+		fclose(handle);
+		WaitPrompt("Backup icon offset is outside the file.");
+		return 0;
+	}
+	visual_offset = data_start + (long)gci.icon_addr;
 
 	/*** Get the Banner/Icon Data from the save file ***/
 	if (SDCARD_GetBannerFmt(gci.banner_fmt) == CARD_BANNER_RGB) {
 		//RGB banners are 96*32*2 in size
-		fread (bannerdata, 1, 6144, handle);
+		if (!read_file_range_advance(handle, bytesToRead, &visual_offset,
+			bannerdata, 6144))
+			goto invalid_visual_data;
 	}
 	else if (SDCARD_GetBannerFmt(gci.banner_fmt) == CARD_BANNER_CI) {
-		fread(bannerdataCI, 1, 3072, handle);
-		fread(tlutbanner, 1, 512, handle);
+		if (!read_file_range_advance(handle, bytesToRead, &visual_offset,
+			bannerdataCI, 3072) ||
+			!read_file_range_advance(handle, bytesToRead, &visual_offset,
+				tlutbanner, 512))
+			goto invalid_visual_data;
 	}
 	//Icon data
 	int shared_pal = 0;
@@ -419,7 +547,7 @@ int SDLoadMCImageHeader(char *sdfilename)
 	int j =0;
     i=0;
 	int current_icon = 0;
-	for (current_icon=0;i<CARD_MAXICONS;++current_icon){
+	for (current_icon = 0; current_icon < CARD_MAXICONS; ++current_icon) {
 
 		//no need to clear all values since we will only use the ones until lasticon
 		frametable[current_icon] = 0;
@@ -444,19 +572,26 @@ int SDLoadMCImageHeader(char *sdfilename)
 
 				//CI with shared palette
 				if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 1) {
-					fread(icondata[current_icon], 1, 1024, handle);
+					if (!read_file_range_advance(handle, bytesToRead, &visual_offset,
+						icondata[current_icon], 1024))
+						goto invalid_visual_data;
 					shared_pal = 1;
 				}
 				//CI with palette after the icon
 				else if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 3)
 				{
-					fread(icondata[current_icon], 1, 1024, handle);
-					fread(tlut[current_icon], 1, 512, handle);
+					if (!read_file_range_advance(handle, bytesToRead, &visual_offset,
+						icondata[current_icon], 1024) ||
+						!read_file_range_advance(handle, bytesToRead, &visual_offset,
+							tlut[current_icon], 512))
+						goto invalid_visual_data;
 				}
 				//RGB 16 bit icon
 				else if (SDCARD_GetIconFmt(gci.icon_fmt,current_icon) == 2)
 				{
-                    fread(icondataRGB[current_icon], 1, 2048, handle);
+					if (!read_file_range_advance(handle, bytesToRead, &visual_offset,
+						icondataRGB[current_icon], 2048))
+						goto invalid_visual_data;
 				}
 			}else
 			{       //Get next real icon
@@ -487,17 +622,25 @@ int SDLoadMCImageHeader(char *sdfilename)
         lasticon = j-1;
     }
 	//Get the shared palette
-	if (shared_pal) fread(tlut[8], 1, 512, handle);
+	if (shared_pal && !read_file_range_advance(handle, bytesToRead, &visual_offset,
+		tlut[8], 512))
+		goto invalid_visual_data;
 
 	//Get the comment
-	rewind(handle);
-	fseek(handle, MCDATAOFFSET + OFFSET + gci.comment_addr, SEEK_SET);
-	fread (CommentBuffer, 1, MCDATAOFFSET, handle);
+	if (data_start > bytesToRead || gci.comment_addr > (u32)(bytesToRead - data_start) ||
+		!read_file_range(handle, bytesToRead, data_start + (long)gci.comment_addr,
+			CommentBuffer, sizeof(CommentBuffer)))
+		goto invalid_visual_data;
 
 	/*** Close the file ***/
 	fclose (handle);
 
 	return bytesToRead;
+
+invalid_visual_data:
+	fclose(handle);
+	WaitPrompt("Backup banner, icon, or comment data is truncated.");
+	return 0;
 }
 
 int SDLoadCardImageHeader(char *sdfilename)
@@ -507,48 +650,63 @@ int SDLoadCardImageHeader(char *sdfilename)
 	char filename[1024];
 	char msg[256];
 	long bytesToRead = 0;
+	long header_offset = 0;
+	int path_length;
 
 	/*** Clear the work buffers ***/
 	memset (&cardheader, 0, sizeof(Header));
 
 	/*** Make fullpath filename ***/
-	sprintf (filename, "%s:/%s/%s", fatpath, currFolder, sdfilename);
+	if (!storage_entry_name_is_safe(sdfilename) || !storage_folder_is_safe())
+		return 0;
+	path_length = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath,
+		currFolder, sdfilename);
+	if (path_length < 0 || path_length >= (int)sizeof(filename))
+		return 0;
 
 	/*** Open the SD Card file ***/
 	handle = fopen ( filename , "rb" );
-	if (handle <= 0)
+	if (!handle)
 	{
-		sprintf(msg, "Couldn't open %s", filename);
+		snprintf(msg, sizeof(msg), "Couldn't open %.230s", filename);
 		WaitPrompt (msg);
 		return 0;
 	}
 
 	// obtain file size:
-	fseek (handle , 0 , SEEK_END);
-	bytesToRead = ftell (handle);
-	rewind (handle);
+	if (!get_file_size(handle, &bytesToRead)) {
+		fclose(handle);
+		return 0;
+	}
 	if (bytesToRead < 8192) //We don't want to read something smaller than the card header
 	{
 		sprintf(msg, "Incorrect file size %ld . Not raw image file or header", bytesToRead);
 		WaitPrompt (msg);
+		fclose(handle);
 		return 0;
 	}
 
-	char fileType[1024];
+	char fileType[5];
 	char * dot;
-	int pos = 4;
 	dot = strrchr(filename,'.');
-	strncpy(fileType, dot+1,pos);
-	fileType[pos]='\0';
+	if (!dot || strlen(dot + 1) != 3) {
+		fclose(handle);
+		return 0;
+	}
+	snprintf(fileType, sizeof(fileType), "%s", dot + 1);
 
 	if(!strcasecmp(fileType, "mci"))
 	{
 		//MCI files have a 64 byte header
-		fseek(handle, 64, SEEK_SET);
+		header_offset = 64;
 	}
 	memset(&cardheader, 0, sizeof(cardheader));
 	/*** Read the file header ***/
-	fread (&cardheader,1,sizeof(cardheader),handle);
+	if (!read_file_range(handle, bytesToRead, header_offset, &cardheader,
+		sizeof(cardheader))) {
+		fclose(handle);
+		return 0;
+	}
 
 	/*** Close the file ***/
 	fclose (handle);
@@ -606,16 +764,20 @@ bool compare_extension(char *filename, char *extension)
 int SDGetFileList(int mode)
 {
 	int filecount = 0;
+	int length;
 	DIR *dir;
 	struct dirent *dit;
-	static char namefile[256*4]; // enough room for UTF-8 encoding
-	int dirtype;
+	char namefile[1280]; // path plus a maximum-length directory entry
 	//static struct stat filestat;
 
 	int dirCount = 0;
 
 	char filename[1024];
-	sprintf (filename, "%s:/%s/", fatpath, currFolder);
+	if (!storage_folder_is_safe())
+		return -1;
+	length = snprintf(filename, sizeof(filename), "%s:/%s/", fatpath, currFolder);
+	if (length < 0 || length >= (int)sizeof(filename))
+		return -1;
 
 
 	//Add Folders
@@ -626,13 +788,21 @@ int SDGetFileList(int mode)
 	
 	while ((dit = readdir(dir)) != NULL)
 	{
-		if(strncmp(dit->d_name, ".", 1) != 0 && strncmp(dit->d_name, "..", 2) != 0)
+		if (filecount >= 1024)
+			break;
+		if (storage_entry_name_is_safe(dit->d_name))
 		{
-			sprintf(namefile, "%s%s", filename, dit->d_name);
-			
+			length = snprintf(namefile, sizeof(namefile), "%s%s", filename,
+				dit->d_name);
+			if (length < 0 || length >= (int)sizeof(namefile))
+				continue;
+
 			if(isdir_sd(namefile) == 1)
 			{
-				strcpy((char *)filelist[filecount], dit->d_name);
+				length = snprintf((char *)filelist[filecount], 1024, "%s",
+					dit->d_name);
+				if (length < 0 || length >= 1024)
+					continue;
 				dirCount++;
 				filecount++;
 			}
@@ -650,15 +820,18 @@ int SDGetFileList(int mode)
 
 	while ((dit = readdir(dir)) != NULL)
 	{
-		if(strncmp(dit->d_name, ".", 1) != 0 && strncmp(dit->d_name, "..", 2) != 0)
+		if (filecount >= 1024)
+			break;
+		if (storage_entry_name_is_safe(dit->d_name))
 		{
 			if (mode)
 			{
 				if (compare_extension(dit->d_name, ".gci") || compare_extension(dit->d_name, ".sav") || compare_extension(dit->d_name, ".gcs"))
 				{
-					strcpy((char *)filelist[filecount], dit->d_name);
-					sprintf(namefile, "%s%s", filename, dit->d_name);
-					dirtype = ((isdir_sd(namefile) == 1) ? DIRENT_T_DIR : DIRENT_T_FILE);
+					length = snprintf((char *)filelist[filecount], 1024, "%s",
+						dit->d_name);
+					if (length < 0 || length >= 1024)
+						continue;
 
 					filecount++;
 				}
@@ -667,9 +840,10 @@ int SDGetFileList(int mode)
 			{
 				if (compare_extension(dit->d_name, ".raw") || compare_extension(dit->d_name, ".gcp") || compare_extension(dit->d_name, ".mci"))
 				{
-					strcpy((char *)filelist[filecount], dit->d_name);
-					sprintf(namefile, "%s%s", filename, dit->d_name);
-					dirtype = ((isdir_sd(namefile) == 1) ? DIRENT_T_DIR : DIRENT_T_FILE);
+					length = snprintf((char *)filelist[filecount], 1024, "%s",
+						dit->d_name);
+					if (length < 0 || length >= 1024)
+						continue;
 
 					filecount++;
 				}
@@ -690,9 +864,10 @@ int SDGetFileList(int mode)
 		 {
             char temp[1024];
 			
-			sprintf(temp, "%s", (char*)filelist[i]);
-			sprintf((char*)filelist[i], "%s", (char*)filelist[j]);
-			sprintf((char*)filelist[j], "%s", temp);
+			strncpy(temp, (char*)filelist[i], sizeof(temp) - 1);
+			temp[sizeof(temp) - 1] = '\0';
+			snprintf((char*)filelist[i], 1024, "%s", (char*)filelist[j]);
+			snprintf((char*)filelist[j], 1024, "%s", temp);
          }
     }
 	
@@ -706,9 +881,10 @@ int SDGetFileList(int mode)
 		 {
             char temp[1024];
 			
-			sprintf(temp, "%s", (char*)filelist[i]);
-			sprintf((char*)filelist[i], "%s", (char*)filelist[j]);
-			sprintf((char*)filelist[j], "%s", temp);
+			strncpy(temp, (char*)filelist[i], sizeof(temp) - 1);
+			temp[sizeof(temp) - 1] = '\0';
+			snprintf((char*)filelist[i], 1024, "%s", (char*)filelist[j]);
+			snprintf((char*)filelist[j], 1024, "%s", temp);
          }
     }
 
@@ -727,8 +903,6 @@ int SDGetFileList(int mode)
 	}*/
 
 	closedir(dir); // cierra el directorio
-	maxfile = filecount;
-	folderCount = dirCount;
 	return filecount;
 
 	/*  int entries = 0;
@@ -751,7 +925,6 @@ int SDGetFileList(int mode)
 
 	  free(sddir);
 
-	  maxfile = filecount;
 	  return filecount;
 	  */
 }

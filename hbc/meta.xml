@@ -1,19 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <app version="1">
-	<name>GCMM</name>
-	<coder>Suloku</coder>
+	<name>GCMM-EX</name>
+	<coder>Alex Ishida</coder>
 	<version>1.5.2</version>
 	<release_date>20211119000000</release_date>
-	<short_description>Memory Card Manager</short_description> 
-	<long_description>A memory card manager for Wii/GC.
-
-Libogc compatibility update by PabloACZ
-Batch gci backup by Pikachu025
-Banner and Icon support by dronesplitter
-F-Zero and Phantasy Star Online support by Ralf
-Folder and sorting support by dragonbane0
-
-Thanks to original mcbackup example code, Askot, dsbomb and justb.
-Special thanks to Costis, Masken, Tantric, tueidj, DacoTaco, Extrems.
-Beta testing: f3bandit</long_description> 
+	<short_description>GCMM-EX memory card manager</short_description>
+	<long_description>GCMM-EX memory card manager for Wii/GC.
+Based on GCMM by suloku and its contributors.
+</long_description>
 </app>
