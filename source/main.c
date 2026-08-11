@@ -8,6 +8,14 @@
 * Uses freetype.
 * libFreeType is available from the downloads sections.
 *****************************************************************************/
+/**
+ * @file main.c
+ * @brief Application startup, device lifecycle, and user workflow orchestration.
+ *
+ * Coordinates UI, mounted storage, and memory-card subsystems. File-format
+ * parsing and card-driver details remain in storage/. Every workflow must
+ * preserve source data after a failed copy, move, backup, or restore.
+ */
 #include <gccore.h>
 #include <ogcsys.h>
 #include <network.h>
@@ -30,10 +38,12 @@
 
 
 #include "mcard.h"
+#include "gci.h"
 #include "raw.h"
 #include "sdsupp.h"
 #include "freetype.h"
 #include "bitmap.h"
+#include "ui.h"
 
 #ifndef HW_RVL
 #include "aram/sidestep.h"
@@ -56,10 +66,11 @@ char fatpath[8];
      can be unmounted again ***/
 static char fatbase[8];
 
-const char appversion[] = "v1.5.2";
-int mode;
-int cancel;
-int doall;
+const char appversion[] = "v1.0";
+
+/* Legacy I/O workflows retained while their task screens are migrated. */
+void SD_RawBackupMode(void);
+void SD_RawRestoreMode(void);
 
 /*** 2D Video Globals ***/
 GXRModeObj *vmode;		/*** Graphics Mode Object ***/
@@ -70,15 +81,14 @@ int vmode_60hz = 0;
 u32 retraceCount;
 
 extern u8 filelist[1024][1024];
-extern bool offsetchanged;
 extern u8 currFolder[260];
-extern int folderCount;
-extern int displaypath;
 u8 selector_flag;
 
 s32 MEM_CARD = CARD_SLOTB;
 extern syssramex *sramex;
 extern u8 imageserial[12];
+extern syssramex *__SYS_LockSramEx();
+extern u32 __SYS_UnlockSramEx(u32 write);
 
 #define NOFAT_MSG "No FAT device detected. You may run device selector again."
 
@@ -106,9 +116,24 @@ static void updatePAD(u32 retrace)
 #define DEV_AVAIL	1
 #define DEV_MOUNTED 2
 */
+typedef enum {
+	STORAGE_NOT_DETECTED = 0,
+	STORAGE_DETECTED,
+	STORAGE_MOUNTED,
+	STORAGE_UNSUPPORTED_FILESYSTEM,
+	STORAGE_MOUNT_FAILED
+} storage_state;
+
+typedef enum {
+	MOUNT_OK = 0,
+	MOUNT_FAILED,
+	MOUNT_UNSUPPORTED_FILESYSTEM
+} mount_result;
+
 u8 DEVICES [DEV_TOTAL+1];
 bool have_sd;
 u8 CUR_DEVICE; //Current device index
+static storage_state storage_mount_state = STORAGE_NOT_DETECTED;
 
 static void detect_devices(){
 
@@ -149,6 +174,8 @@ static void detect_devices(){
 			}
 		}
 #endif
+	if (!have_sd)
+		storage_mount_state = DEVICES[DEV_NUM] ? STORAGE_DETECTED : STORAGE_NOT_DETECTED;
 }
 
 /****************************************************************************
@@ -177,26 +204,35 @@ static void detect_devices(){
      keeps the basename, the rest get the partition number appended ***/
 static void volumeName(char *out, const char *base, int part)
 {
-	if (part == 0)
-		sprintf(out, "%s", base);
-	else
-		sprintf(out, "%s%d", base, part + 1);
+	size_t length = strnlen(base, 7);
+
+	if (length == 7 || (part > 0 && length > 5)) {
+		out[0] = '\0';
+		return;
+	}
+	memcpy(out, base, length);
+	if (part > 0)
+		out[length++] = (char)('1' + part);
+	out[length] = '\0';
 }
 
-static bool mountDevice(const char *name, DISC_INTERFACE *iface)
+static mount_result mountDevice(const char *name, DISC_INTERFACE *iface)
 {
 	char volname[8];
 	char devname[10];
 	int i;
+	int length;
 
 	/*** Registering a driver twice is a no-op, so this is safe to repeat ***/
 	dvmRegisterFsDriver(&g_vfatFsDriver);
 	dvmRegisterFsDriver(&g_exfatFsDriver);
 
 	if (!dvmProbeMountDiscIface(name, iface, DVM_CACHE_PAGES, DVM_SECTORS_PER_PAGE))
-		return false;
+		return MOUNT_FAILED;
 
-	sprintf(fatbase, "%s", name);
+	length = snprintf(fatbase, sizeof(fatbase), "%s", name);
+	if (length < 0 || length >= (int)sizeof(fatbase))
+		return MOUNT_FAILED;
 
 	/*** Point fatpath at the first volume that actually came up. The probe
 	     skips partitions holding a filesystem we have no driver for, so the
@@ -204,15 +240,44 @@ static bool mountDevice(const char *name, DISC_INTERFACE *iface)
 	for (i = 0; i < DVM_MAX_PARTITIONS; i++)
 	{
 		volumeName(volname, name, i);
-		sprintf(devname, "%s:", volname);
+		length = snprintf(devname, sizeof(devname), "%s:", volname);
+		if (length < 0 || length >= (int)sizeof(devname))
+			continue;
 
 		if (GetDeviceOpTab(devname) != NULL)
 		{
-			sprintf(fatpath, "%s", volname);
-			return true;
+			length = snprintf(fatpath, sizeof(fatpath), "%s", volname);
+			if (length < 0 || length >= (int)sizeof(fatpath))
+				continue;
+			return MOUNT_OK;
 		}
 	}
 
+	/* A probe can succeed even when no supported filesystem was mounted. */
+	for (i = 0; i < DVM_MAX_PARTITIONS; i++) {
+		volumeName(volname, name, i);
+		fatUnmount(volname);
+	}
+	fatpath[0] = '\0';
+	fatbase[0] = '\0';
+	return MOUNT_UNSUPPORTED_FILESYSTEM;
+}
+
+static bool mount_storage_device(const char *name, DISC_INTERFACE *iface,
+	const char *mount_error)
+{
+	mount_result result = mountDevice(name, iface);
+
+	if (result == MOUNT_OK) {
+		storage_mount_state = STORAGE_MOUNTED;
+		return true;
+	}
+	storage_mount_state = result == MOUNT_UNSUPPORTED_FILESYSTEM ?
+		STORAGE_UNSUPPORTED_FILESYSTEM : STORAGE_MOUNT_FAILED;
+	if (result == MOUNT_UNSUPPORTED_FILESYSTEM)
+		WaitPrompt("Unsupported filesystem. Use FAT12, FAT16, FAT32, or exFAT.");
+	else
+		WaitPrompt((char *)mount_error);
 	return false;
 }
 
@@ -228,11 +293,19 @@ static bool initFAT(int device)
 {
 	ShowAction("Mounting device...");
 	char msg[128];
-	if (DEVICES[device] != DEV_AVAIL){
-		sprintf (msg, "Failed to mount device %d (device not available %d)", device, DEVICES[device]);
+	if (device < 1 || device > DEV_TOTAL) {
+		storage_mount_state = STORAGE_NOT_DETECTED;
+		snprintf(msg, sizeof(msg), "Failed to mount invalid device %d.", device);
 		WaitPrompt(msg);
 		return false;
 	}
+	if (DEVICES[device] != DEV_AVAIL){
+		storage_mount_state = STORAGE_NOT_DETECTED;
+		snprintf(msg, sizeof(msg), "Failed to mount unavailable device %d.", device);
+		WaitPrompt(msg);
+		return false;
+	}
+	storage_mount_state = STORAGE_DETECTED;
 	//sprintf (msg, "Mounting device... %d", device);
 	//WaitPrompt(msg);
 	switch (device)
@@ -244,11 +317,9 @@ static bool initFAT(int device)
 				WaitPrompt("No SD Gecko inserted in SLOT A!");
 				return false;
 			}
-			if (!mountDevice (SDGECKOA_PATH, &__io_gcsda))
-			{
-				WaitPrompt("Error Mounting slot A SD fat!");
+			if (!mount_storage_device(SDGECKOA_PATH, &__io_gcsda,
+				"Error mounting SD Gecko in Slot A."))
 				return false;
-			}
 			DEVICES[DEV_GCSDA] = DEV_MOUNTED;
 			break;
 		
@@ -259,11 +330,9 @@ static bool initFAT(int device)
 				WaitPrompt("No SD card inserted in SLOT B!");
 				return false;
 			}
-			if (!mountDevice (SDGECKOB_PATH, &__io_gcsdb))
-			{
-				WaitPrompt("Error Mounting slot B SD fat!");
+			if (!mount_storage_device(SDGECKOB_PATH, &__io_gcsdb,
+				"Error mounting SD Gecko in Slot B."))
 				return false;
-			}
 			DEVICES[DEV_GCSDB] = DEV_MOUNTED;
 			break;
 #ifdef HW_DOL
@@ -274,11 +343,9 @@ static bool initFAT(int device)
 				WaitPrompt("No SD card inserted in SD2SP2!");
 				return false;
 			}
-			if (!mountDevice (SD2SP2_PATH, &__io_gcsd2))
-			{
-				WaitPrompt("Error Mounting SD2SP2 SD fat!");
+			if (!mount_storage_device(SD2SP2_PATH, &__io_gcsd2,
+				"Error mounting SD2SP2."))
 				return false;
-			}
 			DEVICES[DEV_GCSDC] = DEV_MOUNTED;
 			break;
 
@@ -289,11 +356,9 @@ static bool initFAT(int device)
 				WaitPrompt("No SD card inserted in GCLoader!");
 				return false;
 			}
-			if (!mountDevice (GCLOADER_PATH, &__io_gcode))
-			{
-				WaitPrompt("Error Mounting GCLoader SD fat!");
+			if (!mount_storage_device(GCLOADER_PATH, &__io_gcode,
+				"Error mounting GC Loader."))
 				return false;
-			}
 			DEVICES[DEV_GCODE] = DEV_MOUNTED;
 			break;
 #elif HW_RVL
@@ -304,11 +369,9 @@ static bool initFAT(int device)
 				WaitPrompt("No SD card inserted in front SD slot!");
 				return false;
 			}
-			if (!mountDevice (WIISD_PATH, &__io_wiisd))
-			{
-				WaitPrompt("Error Mounting Wii SD fat!");
+			if (!mount_storage_device(WIISD_PATH, &__io_wiisd,
+				"Error mounting Wii Front SD."))
 				return false;
-			}
 			DEVICES[DEV_WIISD] = DEV_MOUNTED;
 			break;
 		
@@ -319,11 +382,9 @@ static bool initFAT(int device)
 				WaitPrompt("No USB device inserted!");
 				return false;
 			}
-			if (!mountDevice (WIIUSB_PATH, &__io_usbstorage))
-			{
-				WaitPrompt("Error Mounting USB fat!");
+			if (!mount_storage_device(WIIUSB_PATH, &__io_usbstorage,
+				"Error mounting USB storage."))
 				return false;
-			}
 			DEVICES[DEV_WIIUSB] = DEV_MOUNTED;
 			break;
 #endif
@@ -386,222 +447,1323 @@ void deinitFAT()
 }
 
 u8 skip_selector = 1;
+static const char *device_name(int device)
+{
+	switch (device) {
+	case DEV_GCSDA: return "SD Gecko - Slot A";
+	case DEV_GCSDB: return "SD Gecko - Slot B";
+	case DEV_GCSDC: return "SD2SP2";
+	case DEV_GCODE: return "GC Loader";
+	case DEV_WIISD: return "Wii Front SD";
+	case DEV_WIIUSB: return "USB storage";
+	default: return "No storage device";
+	}
+}
+
+static const char *workflow_source = "Not selected";
+static const char *workflow_destination = "Not selected";
+
+static const char *memory_card_name(int slot)
+{
+	return slot == CARD_SLOTA ? "Memory Card A" : "Memory Card B";
+}
+
+static void set_workflow_state(const char *source, const char *destination)
+{
+	workflow_source = source ? source : "Not selected";
+	workflow_destination = destination ? destination : "Not selected";
+	UI_SetTransferState(workflow_source, workflow_destination);
+}
+
+static void workflow_status(char *status, size_t status_size)
+{
+	snprintf(status, status_size, "Source: %s   Destination: %s", workflow_source,
+		workflow_destination);
+}
+
 int device_select()
 {
-	u32 p, ph;
-#ifdef HW_RVL
-	u32 wp, wph;
-#endif
-	
-	int x = 170;
-	int y = 280;
-	int x_text = x+15;
-	int y_text = y+20;
-	int selected = 0;
-	u8 draw = 1;
-	setfontsize(14);
-	setfontcolour(COL_FONT);
+	const char *items[DEV_TOTAL];
+	u8 item_devices[DEV_TOTAL];
+	int item_count = 0;
+	int selected;
+	int i;
 
-	int i = 0;
-	u8 selected2device[4] = {0, 0, 0, 0};
-	//If there are no fat devices skip
-	if (!DEVICES[DEV_NUM]){
-		WaitPrompt (NOFAT_MSG);
+	if (!DEVICES[DEV_NUM]) {
+		UI_Message("Storage device", "No supported storage detected.",
+			"Connect SD or USB storage and try again.");
 		return 0;
-	}else if (DEVICES[DEV_NUM] == 1 && skip_selector ){ //Only one device was detected, so mount it, but only on first boot
+	}
+	if (DEVICES[DEV_NUM] == 1 && skip_selector) {
 		skip_selector = 0;
-		for (i=1;i<=DEV_TOTAL;i++)
-		{
+		for (i = 1; i <= DEV_TOTAL; i++)
 			if (DEVICES[i])
 				return i;
-		}
-	}else{
-	skip_selector = 0;
-	//Selector screen
-		while(1)
-		{
-			//Draw device selector
-			if (draw){
-				writeStatusBar("Press A to select","");
-				draw = 0;
-				DrawBoxFilled(x, y, x+290, y+90, COL_BG1);
-				y_text= y+20;
-				x_text = x+15;
-				DrawText(x_text, y_text, "Please select your device:");
-				y_text+=20;
-				x_text += 24;
-		#ifdef HW_RVL
-				if(DEVICES[DEV_WIISD]){
-					DrawText(x_text, y_text, "Wii Front SD slot");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_WIISD;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_WIIUSB]){
-					DrawText(x_text, y_text, "USB storage device");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_WIIUSB;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDA]){
-					DrawText(x_text, y_text, "Slot A SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDA;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDB]){
-					DrawText(x_text, y_text, "Slot B SD Gecko");
-					y_text=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDB;
-							break;
-						}
-					}
-				}
-		#else
-				if(DEVICES[DEV_GCSDC]){
-					DrawText(x_text, y_text, "SD2SP2");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDC;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDA]){
-					DrawText(x_text, y_text, "Slot A SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDA;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCSDB]){
-					DrawText(x_text, y_text, "Slot B SD Gecko");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCSDB;
-							break;
-						}
-					}
-				}
-				if(DEVICES[DEV_GCODE]){
-					DrawText(x_text, y_text, "GC Loader");
-					y_text+=15;
-					for (i=0;i<4;i++)
-					{
-						if (!selected2device[i])
-						{
-							selected2device[i]=DEV_GCODE;
-							break;
-						}
-					}
-				}
-		#endif
-				
-				//Draw cursor
-				y_text= y+40;
-				x_text = x+20;
-				switch (selected)
-				{
-					case 0:
-						DrawText(x_text, y_text, ">>");
-						break;
-					case 1:
-						DrawText(x_text, y_text+15, ">>");
-						break;
-					case 2:
-						DrawText(x_text, y_text+15+15, ">>");
-						break;
-					case 3:
-						DrawText(x_text, y_text+15+15+15, ">>");
-						break;
-					default:
-						break;
-				}
-			}//end if (draw)
-			
-			p = PAD_ButtonsDown (0);
-	#ifdef HW_RVL
-			wp = WPAD_ButtonsDown (0);
-	#endif
-			
-			if (p & PAD_BUTTON_A
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_A
-		#endif
-			)
-			{
-				//Do something
-				return selected2device[selected];
-			}
-			if (p & PAD_BUTTON_DOWN
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_DOWN
-		#endif
-			)
-			{
-				selected +=1;
-				if (selected >= DEVICES[DEV_NUM]) selected = 0;
-				draw = 1;
-			}
-			if (p & PAD_BUTTON_UP
-		#ifdef HW_RVL
-				|| wp & WPAD_BUTTON_UP
-		#endif
-			)
-			{
-				selected -=1;
-				if (selected < 0) selected = DEVICES[DEV_NUM]-1;
-				draw = 1;
-			}
-			//char msg[256];
-			//sprintf(msg, "Selected device: %d Total %d DN%d SDA%d SDB%d SDC%d GL%d WSD%d WU%d", selected, DEVICES[DEV_NUM], DEVICES[1],DEVICES[2],DEVICES[3],DEVICES[4],DEVICES[5],DEVICES[6] );
-			/*
-#define DEV_NUM 	0
-#define DEV_GCSDA 	1
-#define DEV_GCSDB 	2
-#define DEV_GCSDC 	3
-#define DEV_GCODE 	4
-#define DEV_WIISD 	5
-#define DEV_WIIUSB	6
-			*/
-			//writeStatusBar(msg, "");
-			ShowScreen();
-		}//end while(1)
 	}
-	return 0;
+
+	for (i = 1; i <= DEV_TOTAL; i++) {
+		if (DEVICES[i]) {
+			items[item_count] = device_name(i);
+			item_devices[item_count++] = i;
+		}
+	}
+	skip_selector = 0;
+	selected = UI_Menu("Storage device", "Choose the storage GCMM-EX should use",
+		items, item_count, 0, "A Select   B Back", true);
+	return selected >= 0 && selected < item_count ? item_devices[selected] : 0;
+}
+
+static bool card_slot_is_reserved(int slot)
+{
+	return (slot == CARD_SLOTA && CUR_DEVICE == DEV_GCSDA) ||
+		(slot == CARD_SLOTB && CUR_DEVICE == DEV_GCSDB);
+}
+
+static bool probe_memory_card(int slot)
+{
+	if (card_slot_is_reserved(slot))
+		return false;
+
+	/* CARD_Probe may need a second poll after card insertion. */
+	CARD_Probe(slot);
+	VIDEO_WaitVSync();
+	return CARD_Probe(slot) > 0;
+}
+
+static void card_status(char *status, size_t status_size, int slot)
+{
+	int save_count;
+	u16 free_blocks;
+
+	if (card_slot_is_reserved(slot)) {
+		snprintf(status, status_size, "Card %c: unavailable (SD Gecko)",
+			slot == CARD_SLOTA ? 'A' : 'B');
+		return;
+	}
+
+	if (!probe_memory_card(slot)) {
+		snprintf(status, status_size, "Card %c: not detected",
+			slot == CARD_SLOTA ? 'A' : 'B');
+		return;
+	}
+	if (MCardGetUsage(slot, &save_count, &free_blocks))
+		snprintf(status, status_size, "Card %c: %d saves, %u free",
+			slot == CARD_SLOTA ? 'A' : 'B', save_count, free_blocks);
+	else
+		snprintf(status, status_size, "Card %c: detected, unavailable",
+			slot == CARD_SLOTA ? 'A' : 'B');
+}
+
+static void storage_status(char *status, size_t status_size)
+{
+	if (have_sd && CUR_DEVICE)
+		snprintf(status, status_size, "Storage: %s (mounted)", device_name(CUR_DEVICE));
+	else if (storage_mount_state == STORAGE_UNSUPPORTED_FILESYSTEM && CUR_DEVICE)
+		snprintf(status, status_size, "Storage: %s (unsupported filesystem)",
+			device_name(CUR_DEVICE));
+	else if (storage_mount_state == STORAGE_MOUNT_FAILED && CUR_DEVICE)
+		snprintf(status, status_size, "Storage: %s (mount failed)", device_name(CUR_DEVICE));
+	else if (storage_mount_state == STORAGE_DETECTED)
+		snprintf(status, status_size, "Storage: detected (not mounted)");
+	else
+		snprintf(status, status_size, "Storage: not detected");
+}
+
+static int select_memory_card(void)
+{
+	char labels[2][48];
+	const char *items[2];
+	int slots[2];
+	bool enabled[2];
+	bool detected;
+	int count = 0;
+	int choice;
+
+	if (!card_slot_is_reserved(CARD_SLOTA)) {
+		detected = probe_memory_card(CARD_SLOTA);
+		snprintf(labels[count], sizeof(labels[count]), "Memory Card A (%s)",
+			detected ? "detected" : "not detected");
+		items[count] = labels[count];
+		enabled[count] = detected;
+		slots[count++] = CARD_SLOTA;
+	}
+	if (!card_slot_is_reserved(CARD_SLOTB)) {
+		detected = probe_memory_card(CARD_SLOTB);
+		snprintf(labels[count], sizeof(labels[count]), "Memory Card B (%s)",
+			detected ? "detected" : "not detected");
+		items[count] = labels[count];
+		enabled[count] = detected;
+		slots[count++] = CARD_SLOTB;
+	}
+	if (!count) {
+		UI_Message("Memory card", "No accessible memory-card slots.",
+			"Active SD Gecko occupies both available card slots.");
+		return -1;
+	}
+
+	choice = UI_MenuDisabled("Memory card", "Choose source or destination card", items,
+		enabled, count, 0, "Unavailable cards cannot be selected. B Back", true);
+	if (choice < 0) {
+		UI_Message("Memory card", "No detected memory cards are available.",
+			"Insert a card or choose a different storage device.");
+		return -1;
+	}
+	return choice >= 0 && choice < count ? slots[choice] : -1;
+}
+
+static int select_other_memory_card(int source_slot)
+{
+	const char *items[1];
+	char label[48];
+	int destination_slot;
+
+	if (source_slot != CARD_SLOTA && source_slot != CARD_SLOTB)
+		return -1;
+	destination_slot = source_slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
+	if (card_slot_is_reserved(destination_slot) || !probe_memory_card(destination_slot)) {
+		UI_Message("Copy save", "No accessible destination memory card is detected.",
+			"Insert the other card or choose a different storage device.");
+		return -1;
+	}
+	snprintf(label, sizeof(label), "Memory Card %c (detected)",
+		destination_slot == CARD_SLOTA ? 'A' : 'B');
+	items[0] = label;
+	return UI_Menu("Copy destination", "Choose destination memory card", items, 1,
+		0, "A Select   B Back", true) == 0 ? destination_slot : -1;
+}
+
+static bool require_storage(void)
+{
+	if (have_sd)
+		return true;
+	UI_Message("Storage device", "No mounted storage device.",
+		"Choose a storage device in Settings before starting this operation.");
+	return false;
+}
+
+static bool storage_entry_name_is_valid(const char *name)
+{
+	if (!name || !name[0] || strnlen(name, 1024) >= 1024)
+		return false;
+	return strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
+		strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
+}
+
+static bool filelist_entry_is_valid(int index, int count)
+{
+	return count > 0 && count <= 1024 && index >= 0 && index < count &&
+		storage_entry_name_is_valid((char *)filelist[index]);
+}
+
+static bool card_save_entry_is_valid(int index)
+{
+	return MCardIsValidSaveIndex(index) &&
+		strnlen((char *)filelist[index], sizeof(filelist[index])) <
+			sizeof(filelist[index]);
+}
+
+static void run_full_backup(void)
+{
+	int slot;
+	int count;
+	int i;
+	int completed = 0;
+	int failed = 0;
+	int bytes;
+	bool canceled = false;
+	char review[96];
+	char detail[96];
+	char item[64];
+	char result[80];
+	u32 total_blocks = 0;
+	bool size_known = true;
+	card_direntry entry;
+	char comments[65];
+
+	if (!require_storage())
+		return;
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
+	if (!probe_memory_card(slot)) {
+		UI_Message("Back up memory card", "Selected memory card is not detected.",
+			"Insert card and try again.");
+		return;
+	}
+	count = CardGetDirectory(slot);
+	if (count <= 0 || count > CARD_MAXFILES) {
+		UI_Message("Back up memory card", "No saves found on this memory card.",
+			"Card may be empty or unavailable.");
+		return;
+	}
+	for (i = 0; i < count; i++) {
+		if (!MCardGetSaveDetails(slot, i, &entry, comments) ||
+			total_blocks > 0xffffffffU - entry.length) {
+			size_known = false;
+			break;
+		}
+		total_blocks += entry.length;
+	}
+	snprintf(review, sizeof(review), "Memory Card %c: %d saves to %s:/%s.",
+		slot == CARD_SLOTA ? 'A' : 'B', count, fatpath, MCSAVES);
+	if (size_known)
+		snprintf(detail, sizeof(detail), "%u blocks, about %llu KiB. Each GCI is size-verified.",
+			total_blocks, ((u64)total_blocks * 8192 + (u64)count * MCDATAOFFSET) / 1024);
+	else
+		snprintf(detail, sizeof(detail), "Size estimate unavailable. Each GCI is size-verified.");
+	if (!UI_Confirm("Review backup", review, detail, "Start backup"))
+		return;
+
+	for (i = 0; i < count; i++) {
+		if (!card_save_entry_is_valid(i)) {
+			failed += count - i;
+			break;
+		}
+		snprintf(item, sizeof(item), "Saving %d of %d: %.32s", i + 1, count,
+			(char *)filelist[i]);
+		UI_Progress("Creating backup", item, i, count);
+		/* Cancellation is handled only between complete save writes. */
+		if (UI_CancelRequested() && UI_Confirm("Cancel backup",
+			"Stop after the saves already written?", "The current file has not started.",
+			"Stop backup")) {
+			canceled = true;
+			break;
+		}
+		if (!probe_memory_card(slot)) {
+			failed += count - i;
+			break;
+		}
+		bytes = CardReadFile(slot, i);
+		if (bytes <= 0 || !SDSaveMCImage())
+			failed++;
+		else
+			completed++;
+	}
+	UI_Progress("Creating backup", "Finalizing backup", count, count);
+	snprintf(result, sizeof(result), "%d saved, %d failed.", completed, failed);
+	if (canceled)
+		UI_Message("Backup canceled", "No file write was interrupted.", result);
+	else if (failed && completed)
+		UI_Message("Backup partial", "Some saves could not be backed up.", result);
+	else if (failed)
+		UI_Message("Backup failed", "No saves were backed up.", result);
+	else
+		UI_Message("Backup complete", "Backup completed successfully.", result);
+}
+
+static bool storage_entry_is_folder(const char *name)
+{
+	char path[1024];
+	int length;
+
+	if (!storage_entry_name_is_valid(name) ||
+		strnlen((char *)currFolder, sizeof(currFolder)) >= sizeof(currFolder))
+		return false;
+	length = snprintf(path, sizeof(path), "%s:/%s/%s", fatpath, currFolder, name);
+	return length > 0 && (size_t)length < sizeof(path) && isdir_sd(path) == 1;
+}
+
+static bool enter_backup_folder(const char *name)
+{
+	char next_folder[sizeof(currFolder)];
+	size_t used;
+	size_t name_length;
+	int length;
+
+	if (!storage_entry_name_is_valid(name))
+		return false;
+	used = strnlen((char *)currFolder, sizeof(currFolder));
+	name_length = strnlen(name, 1024);
+	if (used >= sizeof(currFolder))
+		return false;
+	if (!name_length || name_length >= 1024)
+		return false;
+	length = snprintf(next_folder, sizeof(next_folder), "%s/%s", currFolder,
+		name);
+	if (length < 0 || (size_t)length >= sizeof(next_folder))
+		return false;
+	memcpy(currFolder, next_folder, (size_t)length + 1);
+	return true;
+}
+
+static bool leave_backup_folder(void)
+{
+	char *separator;
+
+	if (strnlen((char *)currFolder, sizeof(currFolder)) >= sizeof(currFolder))
+		return false;
+	if (!strcmp((char *)currFolder, MCSAVES))
+		return false;
+	separator = strrchr((char *)currFolder, '/');
+	if (!separator)
+		return false;
+	*separator = '\0';
+	return true;
+}
+
+static bool write_save_file(int slot);
+
+static void restore_backup_file(const char *filename)
+{
+	card_direntry entry;
+	int slot;
+	char review[96];
+	char detail[80];
+
+	if (!storage_entry_name_is_valid(filename) || !SDLoadMCImageHeader((char *)filename)) {
+		UI_Message("Restore backup", "Backup file is invalid or unreadable.",
+			"Only complete GCI, GCS, and SAV files can be restored.");
+		return;
+	}
+	set_workflow_state(device_name(CUR_DEVICE), NULL);
+	memcpy(&entry, &gci, sizeof(entry));
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+	set_workflow_state(device_name(CUR_DEVICE), memory_card_name(slot));
+	if (!probe_memory_card(slot)) {
+		UI_Message("Restore backup", "Selected memory card is not detected.",
+			"Insert card and try again.");
+		return;
+	}
+	snprintf(review, sizeof(review), "%.48s to Memory Card %c.", filename,
+		slot == CARD_SLOTA ? 'A' : 'B');
+	snprintf(detail, sizeof(detail),
+		"Size: %u blocks. Existing matching save may be overwritten.", entry.length);
+	if (!UI_Confirm("Review restore", review, detail, "Start restore"))
+		return;
+	UI_Progress("Restoring backup", filename, 0, 1);
+	if (!probe_memory_card(slot)) {
+		UI_Message("Restore backup", "Destination memory card was removed.",
+			"Reinsert the card and start the restore again.");
+		return;
+	}
+	if (!SDLoadMCImage((char *)filename)) {
+		UI_Message("Restore backup", "Could not read the complete backup file.",
+			"Check the storage device and backup file.");
+		return;
+	}
+	if (!write_save_file(slot)) {
+		UI_Message("Restore backup", "Could not write the destination memory card.",
+			"Check available blocks, overwrite prompts, and card connection.");
+		return;
+	}
+	UI_Progress("Restoring backup", filename, 1, 1);
+	UI_Message("Restore complete", "Backup restored successfully.",
+		"Do not remove either device until this message is shown.");
+}
+
+static bool write_save_file(int slot)
+{
+	char message[96];
+	int result;
+
+	result = CardWriteFile(slot, 0);
+	if (result == MCARD_WRITE_OK)
+		return true;
+	if (result != MCARD_WRITE_EXISTS)
+		return false;
+	snprintf(message, sizeof(message), "Save %.40s already exists on Memory Card %c.",
+		(char *)gci.filename, slot == CARD_SLOTA ? 'A' : 'B');
+	if (!UI_ConfirmDestructive("Overwrite existing save", message,
+		"The existing save will be permanently replaced.", "Overwrite save"))
+		return false;
+	return CardWriteFile(slot, 1) == MCARD_WRITE_OK;
+}
+
+static void run_restore_backup(void)
+{
+	int count;
+	int selected = 0;
+	char subtitle[96];
+	ui_list_action action;
+
+	if (!require_storage())
+		return;
+	snprintf((char *)currFolder, sizeof(currFolder), "%s", MCSAVES);
+	for (;;) {
+		count = SDGetFileList(1);
+		if (count <= 0) {
+			UI_Message("Restore backup", "No supported backups in this folder.",
+				"Use GCI, GCS, or SAV files in MCBACKUP.");
+			if (!leave_backup_folder())
+				return;
+			continue;
+		}
+		if (count > 1024)
+			count = 1024;
+		snprintf(subtitle, sizeof(subtitle), "%s: %.62s", device_name(CUR_DEVICE),
+			(char *)currFolder);
+		action = UI_SaveList("Restore backup", subtitle, filelist, count,
+			&selected, NULL, -1);
+		if (action == UI_LIST_BACK) {
+			if (!leave_backup_folder())
+				return;
+			selected = 0;
+			continue;
+		}
+		if (action != UI_LIST_OPEN)
+			continue;
+		if (!filelist_entry_is_valid(selected, count))
+			continue;
+		if (storage_entry_is_folder((char *)filelist[selected])) {
+			if (!enter_backup_folder((char *)filelist[selected]))
+				UI_Message("Restore backup", "Folder path is too long.",
+					"Choose a folder with a shorter path.");
+			selected = 0;
+			continue;
+		}
+		restore_backup_file((char *)filelist[selected]);
+	}
+}
+
+static void clean_detail_text(char *out, size_t out_size, const u8 *in, size_t in_size)
+{
+	size_t i;
+	size_t used = 0;
+
+	if (!out_size)
+		return;
+	for (i = 0; i < in_size && used + 1 < out_size; i++) {
+		if (in[i] == '\0' || in[i] == '\n' || in[i] == '\r') {
+			if (used && out[used - 1] != ' ')
+				out[used++] = ' ';
+		} else if (in[i] >= 32 && in[i] <= 126) {
+			out[used++] = (char)in[i];
+		}
+	}
+	while (used && out[used - 1] == ' ')
+		used--;
+	out[used] = '\0';
+}
+
+static void format_save_datetime(u32 timestamp, char *out, size_t out_size)
+{
+	static const char *const months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+	u64 seconds = (u64)timestamp + 946684800ULL;
+	u64 days = seconds / 86400;
+	u64 l = days + 2509157;
+	u64 n = 4 * l / 146097;
+	u64 i;
+	u64 j;
+	u64 day;
+	u64 month;
+	u64 year;
+
+	l -= (146097 * n + 3) / 4;
+	i = 4000 * (l + 1) / 1461001;
+	l = l - 1461 * i / 4 + 31;
+	j = 80 * l / 2447;
+	day = l - 2447 * j / 80;
+	l = j / 11;
+	month = j + 2 - 12 * l;
+	year = 100 * (n - 49) + i + l;
+	if (month < 1 || month > 12) {
+		snprintf(out, out_size, "Modified: unavailable");
+		return;
+	}
+	snprintf(out, out_size, "Modified: %s %02llu, %04llu %02llu:%02llu:%02llu",
+		months[month - 1], day, year, (seconds / 3600) % 24,
+		(seconds / 60) % 60, seconds % 60);
+}
+
+static void show_save_details(int slot, int selected)
+{
+	const char *lines[7];
+	card_direntry entry;
+	char comments[65];
+	char internal_name[CARD_FILENAMELEN + 1];
+	char gamecode[5];
+	char company[3];
+	char metadata[64];
+	char date[64];
+	char permissions[64];
+	char source[32];
+
+	if (!card_save_entry_is_valid(selected) ||
+		!MCardGetSaveDetails(slot, selected, &entry, comments))
+		return;
+	clean_detail_text(internal_name, sizeof(internal_name), entry.filename,
+		sizeof(entry.filename));
+	clean_detail_text(comments, sizeof(comments), (u8 *)comments, 64);
+	memcpy(gamecode, entry.gamecode, 4);
+	gamecode[4] = '\0';
+	memcpy(company, entry.company, 2);
+	company[2] = '\0';
+	format_save_datetime(entry.last_modified, date, sizeof(date));
+	snprintf(metadata, sizeof(metadata), "Game: %s   Company: %s   Blocks: %u", gamecode,
+		company, entry.length);
+	snprintf(permissions, sizeof(permissions), "Permissions: %s%s%s   Copies: %u",
+		(entry.permission & 16) ? "" : "No move ",
+		(entry.permission & 8) ? "" : "No copy ",
+		(entry.permission & 4) ? "Public" : "Private", entry.copy_times);
+
+	snprintf(source, sizeof(source), "Source: Memory Card %c",
+		slot == CARD_SLOTA ? 'A' : 'B');
+	lines[0] = comments[0] ? comments : (char *)filelist[selected];
+	lines[1] = internal_name[0] ? internal_name : "Internal filename unavailable";
+	lines[2] = metadata;
+	lines[3] = date;
+	lines[4] = permissions;
+	lines[5] = source;
+	lines[6] = "Use X for backup and delete actions.";
+	UI_Details("Save details", lines, 7);
+}
+
+static int marked_save_count(const bool *marked, int count)
+{
+	int i;
+	int marked_count = 0;
+
+	if (!marked || count < 0 || count > CARD_MAXFILES)
+		return 0;
+	for (i = 0; i < count; i++)
+		if (marked[i])
+			marked_count++;
+	return marked_count;
+}
+
+static bool selected_save_blocks(int slot, const bool *marked, int count,
+	u32 *blocks)
+{
+	card_direntry entry;
+	char comments[65];
+	u32 total = 0;
+	int i;
+
+	if (!marked || !blocks || count < 0 || count > CARD_MAXFILES)
+		return false;
+	for (i = 0; i < count; i++) {
+		if (!marked[i])
+			continue;
+		if (!MCardGetSaveDetails(slot, i, &entry, comments) ||
+			total > 0xffffffffU - entry.length)
+			return false;
+		total += entry.length;
+	}
+	*blocks = total;
+	return true;
+}
+
+static bool backup_one_save(int slot, int id)
+{
+	card_direntry entry;
+	char comments[65];
+	char review[96];
+	char detail[80];
+
+	if (!card_save_entry_is_valid(id) || !require_storage() || !probe_memory_card(slot))
+		return false;
+	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
+	if (!MCardGetSaveDetails(slot, id, &entry, comments)) {
+		UI_Message("Back up save", "Could not read selected save details.",
+			"No backup was created.");
+		return false;
+	}
+	snprintf(review, sizeof(review), "%.48s from Memory Card %c to %s.",
+		(char *)filelist[id], slot == CARD_SLOTA ? 'A' : 'B', device_name(CUR_DEVICE));
+	snprintf(detail, sizeof(detail), "Size: %u blocks. Output will be size-verified.",
+		entry.length);
+	if (!UI_Confirm("Review save backup", review, detail, "Start backup"))
+		return false;
+	UI_Progress("Backing up save", (char *)filelist[id], 0, 1);
+	if (!probe_memory_card(slot) || !CardReadFile(slot, id) || !SDSaveMCImage()) {
+		UI_Message("Back up save", "Backup failed.",
+			"Check memory card, storage space, and filesystem.");
+		return false;
+	}
+	UI_Progress("Backing up save", (char *)filelist[id], 1, 1);
+	UI_Message("Back up save", "Backup completed successfully.",
+		"GCI size verified on storage.");
+	return true;
+}
+
+static bool copy_save_to_card(int source_slot, int id)
+{
+	int destination_slot;
+	card_direntry entry;
+	char comments[65];
+	char review[96];
+	char detail[80];
+
+	if (!card_save_entry_is_valid(id) || !probe_memory_card(source_slot) ||
+		!MCardGetSaveDetails(source_slot, id, &entry, comments))
+		return false;
+	destination_slot = select_other_memory_card(source_slot);
+	if (destination_slot < 0)
+		return false;
+	if (!probe_memory_card(destination_slot)) {
+		UI_Message("Copy save", "Destination memory card is not detected.",
+			"Insert destination card and try again.");
+		return false;
+	}
+	set_workflow_state(memory_card_name(source_slot), memory_card_name(destination_slot));
+	snprintf(review, sizeof(review), "%.48s: Memory Card %c to Memory Card %c.",
+		(char *)filelist[id], source_slot == CARD_SLOTA ? 'A' : 'B',
+		destination_slot == CARD_SLOTA ? 'A' : 'B');
+	snprintf(detail, sizeof(detail), "Size: %u blocks. Destination save may be overwritten.",
+		entry.length);
+	if (!UI_Confirm("Review copy", review, detail, "Start copy"))
+		return false;
+	UI_Progress("Copying save", (char *)filelist[id], 0, 3);
+	if (!probe_memory_card(source_slot) || !CardReadFile(source_slot, id))
+		return false;
+	UI_Progress("Copying save", "Writing destination memory card", 1, 3);
+	if (!probe_memory_card(destination_slot) || !write_save_file(destination_slot))
+		return false;
+	UI_Progress("Copying save", "Verifying destination memory card", 2, 3);
+	if (!probe_memory_card(destination_slot) || !MCardVerifyLastWrite(destination_slot))
+		return false;
+	UI_Progress("Copying save", (char *)filelist[id], 3, 3);
+	UI_Message("Copy complete", "Save copied successfully.",
+		"Source save was not modified.");
+	return true;
+}
+
+static void copy_marked_saves(int source_slot, const bool *marked, int count)
+{
+	int i;
+	int selected_count = marked_save_count(marked, count);
+	int destination_slot;
+	int completed = 0;
+	int failed = 0;
+	int skipped = 0;
+	int current = 0;
+	u32 total_blocks;
+	char review[96];
+	char detail[96];
+	char item[64];
+	char error[96];
+	char result[80];
+
+	if (!selected_count || !probe_memory_card(source_slot))
+		return;
+	if (!selected_save_blocks(source_slot, marked, count, &total_blocks)) {
+		UI_Message("Copy selected saves", "Could not read selected save metadata.",
+			"No saves were copied.");
+		return;
+	}
+	destination_slot = select_other_memory_card(source_slot);
+	if (destination_slot < 0)
+		return;
+	set_workflow_state(memory_card_name(source_slot), memory_card_name(destination_slot));
+	snprintf(review, sizeof(review), "%d saves: Memory Card %c to Memory Card %c.",
+		selected_count, source_slot == CARD_SLOTA ? 'A' : 'B',
+		destination_slot == CARD_SLOTA ? 'A' : 'B');
+	snprintf(detail, sizeof(detail), "%u blocks total. Destination saves may be overwritten.",
+		total_blocks);
+	if (!UI_Confirm("Review selected copy", review, detail, "Start copy"))
+		return;
+
+	for (i = 0; i < count; i++) {
+		if (!marked[i])
+			continue;
+		current++;
+		if (!card_save_entry_is_valid(i)) {
+			failed++;
+			continue;
+		}
+		snprintf(item, sizeof(item), "Copying %d of %d: %.24s", current, selected_count,
+			(char *)filelist[i]);
+		UI_Progress("Copying selected saves", item, current - 1, selected_count);
+		if (!probe_memory_card(source_slot) || !CardReadFile(source_slot, i) ||
+			!probe_memory_card(destination_slot) || !write_save_file(destination_slot)) {
+			failed++;
+			snprintf(error, sizeof(error), "Could not copy %.42s.", (char *)filelist[i]);
+			if (!UI_Confirm("Copy error", error, NULL, "Continue")) {
+				skipped = selected_count - current;
+				break;
+			}
+		} else {
+			completed++;
+		}
+	}
+	UI_Progress("Copying selected saves", "Finalizing copy", selected_count, selected_count);
+	snprintf(result, sizeof(result), "%d copied, %d failed, %d skipped.", completed,
+		failed, skipped);
+	if (skipped)
+		UI_Message("Selected copy stopped", "Remaining selected saves were skipped.", result);
+	else if (failed && completed)
+		UI_Message("Selected copy partial", "Some selected saves could not be copied.", result);
+	else if (failed)
+		UI_Message("Selected copy failed", "No selected saves were copied.", result);
+	else
+		UI_Message("Selected copy complete", "All selected saves were copied.", result);
+}
+
+static void backup_marked_saves(int slot, const bool *marked, int count)
+{
+	int i;
+	int selected_count = marked_save_count(marked, count);
+	int completed = 0;
+	int failed = 0;
+	int skipped = 0;
+	int current = 0;
+	u32 total_blocks;
+	char review[96];
+	char detail[96];
+	char item[64];
+	char result[80];
+	char error[96];
+
+	if (!selected_count || !require_storage() || !probe_memory_card(slot))
+		return;
+	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
+	if (!selected_save_blocks(slot, marked, count, &total_blocks)) {
+		UI_Message("Selected backup", "Could not read selected save metadata.",
+			"No backup was created.");
+		return;
+	}
+	snprintf(review, sizeof(review), "%d saves from Memory Card %c to %s.",
+		selected_count, slot == CARD_SLOTA ? 'A' : 'B', device_name(CUR_DEVICE));
+	snprintf(detail, sizeof(detail), "%u blocks total. Each GCI output is size-verified.",
+		total_blocks);
+	if (!UI_Confirm("Review selected backup", review, detail, "Start backup"))
+		return;
+	for (i = 0; i < count; i++) {
+		if (!marked[i])
+			continue;
+		current++;
+		if (!card_save_entry_is_valid(i)) {
+			failed++;
+			continue;
+		}
+		snprintf(item, sizeof(item), "Saving %d of %d: %.24s", current, selected_count,
+			(char *)filelist[i]);
+		UI_Progress("Backing up selected saves", item, current - 1, selected_count);
+		if (!probe_memory_card(slot) || !CardReadFile(slot, i) || !SDSaveMCImage()) {
+			failed++;
+			snprintf(error, sizeof(error), "Could not back up %.42s.",
+				(char *)filelist[i]);
+			if (!UI_Confirm("Backup error", error, NULL, "Continue")) {
+				skipped = selected_count - current;
+				break;
+			}
+		} else {
+			completed++;
+		}
+	}
+	UI_Progress("Backing up selected saves", "Finalizing backup", selected_count, selected_count);
+	snprintf(result, sizeof(result), "%d saved, %d failed, %d skipped.", completed,
+		failed, skipped);
+	if (skipped)
+		UI_Message("Selected backup stopped", "Remaining selected saves were skipped.", result);
+	else if (failed && completed)
+		UI_Message("Selected backup partial", "Some saves could not be backed up.", result);
+	else if (failed)
+		UI_Message("Selected backup failed", "No selected saves were backed up.", result);
+	else
+		UI_Message("Selected backup complete", "All selected saves were backed up.", result);
+}
+
+static void move_save_to_card(int source_slot, int id)
+{
+	char message[96];
+
+	if (!card_save_entry_is_valid(id))
+		return;
+	snprintf(message, sizeof(message), "%.42s will be copied, then deleted from Memory Card %c.",
+		(char *)filelist[id], source_slot == CARD_SLOTA ? 'A' : 'B');
+	if (!UI_ConfirmDestructive("Move save", message,
+		"Source is deleted only after the destination copy succeeds.", "Start move"))
+		return;
+	if (!copy_save_to_card(source_slot, id)) {
+		UI_Message("Move save", "Move stopped before source deletion.",
+			"Source save remains unchanged.");
+		return;
+	}
+	if (!probe_memory_card(source_slot) || !MCardDeleteFile(source_slot, id)) {
+		UI_Message("Move partial", "Copy succeeded, but source deletion failed.",
+			"Both copies may now exist. Verify cards before retrying.");
+		return;
+	}
+	UI_Message("Move complete", "Save copied and source deleted.", NULL);
+}
+
+static int delete_marked_saves(int slot, bool *marked, int count)
+{
+	char message[64];
+	char detail[96];
+	char result[80];
+	char item[64];
+	char error[96];
+	int i;
+	int selected_count = marked_save_count(marked, count);
+	int deleted = 0;
+	int failed = 0;
+	int skipped = 0;
+	int current = 0;
+	u32 total_blocks;
+
+	if (!marked || count < 0 || count > CARD_MAXFILES || !selected_count)
+		return 0;
+	if (!probe_memory_card(slot)) {
+		UI_Message("Delete selected saves", "Selected memory card is not detected.",
+			"Insert card and try again.");
+		return -1;
+	}
+	if (!selected_save_blocks(slot, marked, count, &total_blocks)) {
+		UI_Message("Delete selected saves", "Could not read selected save metadata.",
+			"No data was deleted.");
+		return -1;
+	}
+	snprintf(message, sizeof(message), "%d selected saves will be permanently deleted.",
+		selected_count);
+	snprintf(detail, sizeof(detail), "%u blocks will be deleted. This action cannot be undone.",
+		total_blocks);
+	if (!UI_ConfirmDestructive("Delete selected saves", message, detail, "Delete selected saves"))
+		return 0;
+
+	/* Descending order avoids directory-index drift while entries are deleted. */
+	for (i = count - 1; i >= 0; i--) {
+		if (!marked[i])
+			continue;
+		current++;
+		if (!card_save_entry_is_valid(i)) {
+			failed++;
+			continue;
+		}
+		snprintf(item, sizeof(item), "Deleting %d of %d: %.24s", current,
+			selected_count, (char *)filelist[i]);
+		UI_Progress("Deleting selected saves", item, current - 1, selected_count);
+		if (!probe_memory_card(slot) || !MCardDeleteFile(slot, i)) {
+			failed++;
+			snprintf(error, sizeof(error), "Could not delete %.42s.",
+				(char *)filelist[i]);
+			if (!UI_Confirm("Delete error", error, NULL, "Continue")) {
+				skipped = selected_count - current;
+				break;
+			}
+		} else {
+			deleted++;
+		}
+	}
+	UI_Progress("Deleting selected saves", "Finalizing deletion", selected_count, selected_count);
+	snprintf(result, sizeof(result), "%d deleted, %d failed, %d skipped.", deleted,
+		failed, skipped);
+	if (skipped)
+		UI_Message("Delete selected saves", "Batch delete stopped.", result);
+	else
+		UI_Message("Delete selected saves", "Batch delete finished.", result);
+	return 1;
+}
+
+static void run_manage_saves(void)
+{
+	const char *actions[9];
+	static const char *const sources[] = {
+		"Memory card",
+		"Mounted storage backups"
+	};
+	bool action_enabled[9];
+	bool marked[CARD_MAXFILES] = { false };
+	char subtitle[64];
+	int slot;
+	int count;
+	int usage_count;
+	u16 free_blocks;
+	int selected = 0;
+	int action;
+	int action_count;
+	int selected_count;
+	int batch_result;
+	card_direntry selected_entry;
+	char delete_message[96];
+	char delete_detail[96];
+	ui_list_action result;
+
+	if (have_sd) {
+		int source = UI_Menu("Manage saves", "Choose a source", sources, 2, 0,
+			"A Select   B Back", true);
+
+		if (source < 0)
+			return;
+		if (source == 1) {
+			set_workflow_state(device_name(CUR_DEVICE), NULL);
+			run_restore_backup();
+			return;
+		}
+	}
+
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+	set_workflow_state(memory_card_name(slot), NULL);
+	if (!probe_memory_card(slot)) {
+		UI_Message("Manage saves", "Selected memory card is not detected.",
+			"Insert card and try again.");
+		return;
+	}
+
+	count = CardGetDirectory(slot);
+	if (count <= 0 || count > CARD_MAXFILES) {
+		UI_Message("Manage saves", "No saves found on this memory card.",
+			"Card may be empty or unavailable.");
+		return;
+	}
+	if (MCardGetUsage(slot, &usage_count, &free_blocks))
+		snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, %u free blocks",
+			slot == CARD_SLOTA ? 'A' : 'B', count, free_blocks);
+	else
+		snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, usage unavailable",
+			slot == CARD_SLOTA ? 'A' : 'B', count);
+
+	for (;;) {
+		result = UI_SaveList("Manage saves", subtitle, filelist, count, &selected,
+			marked, slot);
+		if (result == UI_LIST_DEVICE_REMOVED) {
+			UI_Message("Manage saves", "Selected memory card was removed.",
+				"No save operation was started.");
+			return;
+		}
+		if (result == UI_LIST_BACK)
+			return;
+		if (result == UI_LIST_PREVIOUS_DEVICE || result == UI_LIST_NEXT_DEVICE) {
+			int next_slot = slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
+
+			if (card_slot_is_reserved(next_slot) || !probe_memory_card(next_slot)) {
+				UI_Message("Manage saves", "Other memory-card slot is unavailable.",
+					"Insert an accessible card or return to choose a device.");
+				continue;
+			}
+			slot = next_slot;
+			MEM_CARD = slot;
+			set_workflow_state(memory_card_name(slot), NULL);
+			count = CardGetDirectory(slot);
+			if (count <= 0 || count > CARD_MAXFILES) {
+				UI_Message("Manage saves", "No saves found on this memory card.",
+					"Card may be empty or unavailable.");
+				return;
+			}
+			selected = 0;
+			memset(marked, 0, sizeof(marked));
+			if (MCardGetUsage(slot, &usage_count, &free_blocks))
+				snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, %u free blocks",
+					slot == CARD_SLOTA ? 'A' : 'B', count, free_blocks);
+			else
+				snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, usage unavailable",
+					slot == CARD_SLOTA ? 'A' : 'B', count);
+			continue;
+		}
+		if (result == UI_LIST_OPEN) {
+			if (!card_save_entry_is_valid(selected) || selected >= count)
+				continue;
+			show_save_details(slot, selected);
+			continue;
+		}
+		if (result != UI_LIST_CONTEXT) {
+			continue;
+		}
+		if (!card_save_entry_is_valid(selected) || selected >= count)
+			continue;
+
+		selected_count = marked_save_count(marked, count);
+		actions[0] = "Details";
+		actions[1] = "Copy to memory card";
+		actions[2] = "Move to memory card";
+		actions[3] = "Back up to storage";
+		actions[4] = "Delete save";
+		action_enabled[0] = true;
+		action_enabled[1] = !card_slot_is_reserved(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA) &&
+			probe_memory_card(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA);
+		action_enabled[2] = action_enabled[1];
+		action_enabled[3] = have_sd;
+		action_enabled[4] = true;
+		action_count = 5;
+		if (selected_count) {
+			actions[action_count++] = "Copy selected saves";
+			actions[action_count++] = "Back up selected saves";
+			actions[action_count++] = "Delete selected saves";
+			actions[action_count] = "Clear selection";
+			action_enabled[5] = !card_slot_is_reserved(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA) &&
+			probe_memory_card(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA);
+			action_enabled[6] = have_sd;
+			action_enabled[7] = true;
+			action_enabled[8] = true;
+			action_count++;
+		}
+		action = UI_MenuDisabled("Save actions", (char *)filelist[selected], actions,
+			action_enabled, action_count, 0,
+			"Unavailable actions need storage or other card. B Back", true);
+		if (action < 0)
+			continue;
+		if (action == 0) {
+			show_save_details(slot, selected);
+			continue;
+		}
+		if (action == 1) {
+			copy_save_to_card(slot, selected);
+			continue;
+		}
+		if (action == 2) {
+			move_save_to_card(slot, selected);
+			count = CardGetDirectory(slot);
+			if (count <= 0 || count > CARD_MAXFILES)
+				return;
+			if (selected >= count)
+				selected = count - 1;
+			continue;
+		}
+		if (action == 3) {
+			backup_one_save(slot, selected);
+			continue;
+		}
+		if (selected_count && action == 5) {
+			copy_marked_saves(slot, marked, count);
+			continue;
+		}
+		if (selected_count && action == 6) {
+			backup_marked_saves(slot, marked, count);
+			continue;
+		}
+		if (selected_count && action == 7) {
+			batch_result = delete_marked_saves(slot, marked, count);
+			if (batch_result < 0)
+				return;
+			if (batch_result == 0)
+				continue;
+			count = CardGetDirectory(slot);
+			if (count <= 0 || count > CARD_MAXFILES) {
+				UI_Message("Manage saves", "No saves remain on this memory card.", NULL);
+				return;
+			}
+			if (selected >= count)
+				selected = count - 1;
+			memset(marked, 0, sizeof(marked));
+			if (MCardGetUsage(slot, &usage_count, &free_blocks))
+				snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, %u free blocks",
+					slot == CARD_SLOTA ? 'A' : 'B', count, free_blocks);
+			else
+				snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, usage unavailable",
+					slot == CARD_SLOTA ? 'A' : 'B', count);
+			continue;
+		}
+		if (selected_count && action == 8) {
+			memset(marked, 0, sizeof(marked));
+			continue;
+		}
+		if (!probe_memory_card(slot)) {
+			UI_Message("Delete save", "Selected memory card is not detected.",
+				"Insert card and try again.");
+			return;
+		}
+		if (!MCardGetSaveDetails(slot, selected, &selected_entry, delete_message)) {
+			UI_Message("Delete save", "Could not read selected save details.",
+			"No data was deleted.");
+			return;
+		}
+		snprintf(delete_message, sizeof(delete_message),
+			"Delete %.48s from Memory Card %c?", (char *)filelist[selected],
+			slot == CARD_SLOTA ? 'A' : 'B');
+		snprintf(delete_detail, sizeof(delete_detail),
+			"Size: %u blocks. This action cannot be undone.", selected_entry.length);
+		if (!UI_ConfirmDestructive("Delete save", delete_message, delete_detail, "Delete save"))
+			continue;
+		if (!MCardDeleteFile(slot, selected))
+			return;
+		UI_Message("Delete save", "Save deleted.", "Directory will now refresh.");
+		count = CardGetDirectory(slot);
+		if (count <= 0 || count > CARD_MAXFILES) {
+			UI_Message("Manage saves", "No saves remain on this memory card.", NULL);
+			return;
+		}
+		if (selected >= count)
+			selected = count - 1;
+		memset(marked, 0, sizeof(marked));
+		if (MCardGetUsage(slot, &usage_count, &free_blocks))
+			snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, %u free blocks",
+				slot == CARD_SLOTA ? 'A' : 'B', count, free_blocks);
+		else
+			snprintf(subtitle, sizeof(subtitle), "Memory Card %c - %d saves, usage unavailable",
+			slot == CARD_SLOTA ? 'A' : 'B', count);
+	}
+}
+
+static void run_advanced_menu(void)
+{
+	static const char *const items[] = {
+		"Full memory-card RAW backup",
+		"Restore RAW/GCP/MCI image",
+		"Format memory card",
+		"Exit and loader behavior"
+	};
+	int choice;
+	int slot;
+	char format_message[80];
+
+	for (;;) {
+		choice = UI_Menu("Advanced options", "High-risk operations", items, 4, 0,
+			"A Select   B Back", true);
+		if (choice < 0)
+			return;
+		if (choice == 3) {
+			static const char *const lines[] = {
+				"Exit behavior",
+#ifdef HW_RVL
+				"Wii: returns to the loader when present.",
+				"Otherwise returns to the Wii System Menu.",
+#else
+				"GameCube: returns to PSO/SD loader when present.",
+				"Otherwise attempts autoexec.dol, then reboots.",
+#endif
+				"Use B on the home screen to exit GCMM-EX."
+			};
+			UI_Details("Exit and loader behavior", lines, 4);
+			continue;
+		}
+		if (!require_storage() && choice != 2)
+			continue;
+
+		slot = select_memory_card();
+		if (slot < 0)
+			continue;
+		MEM_CARD = slot;
+		if (choice == 0) {
+			char message[96];
+
+			set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
+
+			snprintf(message, sizeof(message),
+				"Create a complete RAW image of Memory Card %c on %s.",
+				slot == CARD_SLOTA ? 'A' : 'B', device_name(CUR_DEVICE));
+			if (UI_Confirm("Review RAW backup", message,
+				"The card is read-only during this operation.", "Start RAW backup"))
+				SD_RawBackupMode();
+		}
+		else if (choice == 1) {
+			set_workflow_state(device_name(CUR_DEVICE), memory_card_name(slot));
+			SD_RawRestoreMode();
+		}
+		else if (!probe_memory_card(slot)) {
+			UI_Message("Format memory card", "Selected memory card is not detected.",
+				"Insert card and try again.");
+		} else {
+			set_workflow_state(memory_card_name(slot), "Not applicable");
+			snprintf(format_message, sizeof(format_message),
+				"All saves on Memory Card %c will be erased.",
+				slot == CARD_SLOTA ? 'A' : 'B');
+			if (!UI_ConfirmDestructive("Format memory card", format_message,
+				"Select FORMAT MEMORY CARD only if you intend to erase all data.",
+				"FORMAT MEMORY CARD"))
+				continue;
+			if (!probe_memory_card(slot)) {
+				UI_Message("Format memory card", "Selected memory card is no longer detected.",
+					"Insert the card and start the operation again.");
+				continue;
+			}
+			UI_Progress("Formatting memory card", "Formatting. Do not remove the card.", 0, 1);
+			if (MCardFormat(slot))
+				UI_Message("Format complete", "Memory card formatted successfully.", "Card remounted and verified.");
+			else
+				UI_Message("Format failed", "Memory card could not be formatted.",
+					"No further changes were made by GCMM-EX.");
+		}
+	}
+}
+
+static void show_information(void)
+{
+	const char *lines[6];
+	char version[48];
+
+	snprintf(version, sizeof(version), "GCMM-EX %s", appversion);
+	lines[0] = version;
+	lines[1] = "New interface and workflow";
+	lines[2] = "Author: Alex Ishida";
+	lines[3] = "Based on GCMM by suloku";
+	lines[4] = "Memory-card formats, compatibility, and hardware safety";
+	lines[5] = "See README/changelog for credits. GNU GPL v3.0.";
+	UI_Details("Information and credits", lines, 6);
+}
+
+static void run_settings_menu(void)
+{
+	static const char *const items[] = {
+		"Storage devices",
+		"Controls and help",
+		"Information and credits",
+		"Advanced options"
+	};
+	int choice;
+	int device;
+
+	for (;;) {
+		choice = UI_Menu("Settings", "GCMM-EX settings", items, 4, 0,
+			"A Select   B Back", true);
+		if (choice < 0)
+			return;
+		if (choice == 0) {
+			int previous_device = CUR_DEVICE;
+			bool previous_mounted = have_sd;
+
+			if (previous_mounted)
+				deinitFAT();
+			detect_devices();
+			device = device_select();
+			if (device) {
+				CUR_DEVICE = device;
+				have_sd = initFAT(CUR_DEVICE);
+				if (!have_sd)
+					UI_Message("Storage device", "Could not mount selected device.",
+						"Previous storage will be restored when available.");
+			}
+			if (!have_sd && previous_mounted && previous_device &&
+				DEVICES[previous_device] == DEV_AVAIL) {
+				CUR_DEVICE = previous_device;
+				have_sd = initFAT(CUR_DEVICE);
+			}
+		} else if (choice == 1) {
+			UI_Help();
+		} else if (choice == 2) {
+			show_information();
+		} else {
+			run_advanced_menu();
+		}
+	}
+}
+
+static void run_home_menu(void)
+{
+	char card_a[64];
+	char card_b[64];
+	char storage[96];
+	char transfer[128];
+	int choice;
+
+	for (;;) {
+		freecardbuf();
+		card_status(card_a, sizeof(card_a), CARD_SLOTA);
+		card_status(card_b, sizeof(card_b), CARD_SLOTB);
+		storage_status(storage, sizeof(storage));
+		workflow_status(transfer, sizeof(transfer));
+		choice = UI_HomeMenu(card_a, card_b, storage, transfer, 0);
+		if (choice < 0) {
+			if (UI_Confirm("Exit GCMM-EX", "Return to loader or system menu?", NULL,
+				"Exit"))
+				return;
+			continue;
+		}
+		if (choice == 0) {
+			run_manage_saves();
+			continue;
+		}
+		if (choice == 3) {
+			run_settings_menu();
+			continue;
+		}
+		if (!require_storage())
+			continue;
+		if (choice == 1) {
+			run_full_backup();
+		} else {
+			run_restore_backup();
+		}
+	}
 }
 
 /****************************************************************************
@@ -717,340 +1879,6 @@ Initialise (void)
 
 
 /****************************************************************************
-* BackupMode -SD Mode
-*
-* Perform backup of a memory card file to a SD Card.
-****************************************************************************/
-void SD_BackupMode ()
-{
-	int memitems;
-	int selected = 0;
-	int bytestodo;
-	char buffer[256], text[64];
-	
-	displaypath = 0;
-
-	clearRightPane();
-	DrawText(386,130,"B a c k u p   M o d e");
-	DrawText(386,134,"_____________________");
-	writeStatusBar("Reading memory card... ", "");
-	/*** Get the directory listing from the memory card ***/
-	memitems = CardGetDirectory (MEM_CARD);
-
-	setfontsize (14);
-	writeStatusBar("Pick a file using UP or DOWN ", "Press A to backup savegame") ;
-#ifdef HW_RVL
-	DrawText(40, 50, "Press R/1 to backup ALL savegames");
-#else
-	DrawText(40, 50, "Press R to backup ALL savegames");
-#endif
-
-	/*** If it's a blank card, get out of here ***/
-	if (!memitems)
-	{
-		WaitPrompt ("No saved games to backup!");
-	}
-	else
-	{
-		selected = ShowSelector (1);
-		if (cancel)
-		{
-			WaitPrompt ("Backup action cancelled!");
-		}
-		else if(doall)
-		{
-			doall = WaitPromptChoice("Are you sure you want to backup all files?", "No", "Yes");
-			if (doall)
-			{
-				//Backup All files
-				for ( selected = 0; selected < memitems; selected++ ) {
-					/*** Backup files ***/
-					sprintf(buffer, "[%d/%d] Reading from MC slot %s", selected+1, memitems, (MEM_CARD) ? "B" : "A");
-					ShowAction(buffer);
-					bytestodo = CardReadFile(MEM_CARD, selected);
-					if (bytestodo)
-					{
-						sprintf(buffer, "[%d/%d] Saving to FAT device", selected+1, memitems);
-						ShowAction(buffer);
-						if (!SDSaveMCImage())
-						{
-							strncpy(text, (char*)filelist[selected], 32);
-							text[32]='\0';
-							sprintf(buffer, "Error during backup (%s). Continue?", text);
-							doall = WaitPromptChoice(buffer, "Yes", "No");
-							if (doall)
-							{
-								WaitPrompt ("Backup action cancelled due to error!");
-								return;
-							}
-						}
-
-					}
-					else
-					{
-						WaitPrompt ("Error reading MC file");
-						return;
-					}
-				}
-
-				WaitPrompt("Full card backup done!");
-				return;
-			}
-
-		}
-		else
-		{
-			/*** Backup the file ***/
-			ShowAction ("Reading File From MC SLOT B");
-			bytestodo = CardReadFile (MEM_CARD, selected);
-			if (bytestodo)
-			{
-				ShowAction ("Saving to FAT device");
-				if (SDSaveMCImage())
-				{
-					WaitPrompt ("Backup complete");
-					return;
-				}
-				else
-				{
-					WaitPrompt ("Backup failed");
-					return;
-				}
-			}
-			else
-			{
-				WaitPrompt ("Error reading MC file");
-				return;
-			}
-
-		}
-	}
-    return;
-}
-
-
-
-/****************************************************************************
-* BackupModeAllFiles - SD Mode
-* Copy all files on the Memory Card to the SD card
-****************************************************************************/
-void SD_BackupModeAllFiles ()
-{
-	int memitems;
-	int selected = 0;
-	int bytestodo;
-
-	char buffer[128];
-	
-	displaypath = 0;
-
-	clearRightPane();
-	DrawText(386,130," B a c k u p   A l l ");
-	DrawText(386,134,"_____________________");
-
-	setfontsize (14);
-	writeStatusBar("Backing up all files.", "This may take a while.");
-	/*** Get the directory listing from the memory card ***/
-	memitems = CardGetDirectory (MEM_CARD);
-
-	/*** If it's a blank card, get out of here ***/
-	if (!memitems)
-	{
-		WaitPrompt ("No saved games to backup!");
-	}
-	else
-	{
-		for ( selected = 0; selected < memitems; selected++ ) {
-			/*** Backup files ***/
-			sprintf(buffer, "[%d/%d] Reading from MC slot B", selected+1, memitems);
-			ShowAction(buffer);
-			bytestodo = CardReadFile(MEM_CARD, selected);
-			if (bytestodo)
-			{
-				sprintf(buffer, "[%d/%d] Saving to FAT device", selected+1, memitems);
-				ShowAction(buffer);
-				SDSaveMCImage();
-			}
-			else
-			{
-				WaitPrompt ("Error reading MC file");
-				return;
-			}
-		}
-
-		WaitPrompt("Full card backup done!");
-	}
-}
-
-
-
-/****************************************************************************
-* RestoreMode
-*
-* Restore a file to Memory Card from SD Card
-****************************************************************************/
-void SD_RestoreMode ()
-{
-	int files;
-	int selected;
-	char buffer[256], text[64];
-	int inProgress = 1;
-	
-	displaypath = 1;
-
-	clearRightPane();
-	DrawText(380,130,"R e s t o r e  M o d e");
-	DrawText(380,134,"______________________");
-	writeStatusBar("Reading files... ", "");
-	
-	//Dragonbane: Curr Folder to default
-	
-	sprintf((char*)currFolder, "MCBACKUP");
-
-	files = SDGetFileList (1);
-
-	setfontsize (14);
-#ifdef HW_RVL
-	DrawText(40, 50, "Press R/1 to restore ALL savegames");
-#else
-	DrawText(40, 50, "Press R to restore ALL savegames");
-#endif
-
-	if (!files)
-	{
-		WaitPrompt ("No saved games in FAT device to restore !");
-	}
-    else
-	{
-		while(inProgress == 1)
-		{
-			writeStatusBar("Pick a file using UP or DOWN", "Press A to restore to Memory Card ") ;
-			
-			//It will wait here until user selected a file
-			selected = ShowSelector (1);
-
-			if (cancel)
-			{
-				if (strcmp((char*)currFolder, "MCBACKUP") == 0)
-				{
-					WaitPrompt ("Restore action cancelled !");
-					return;
-				}
-				else
-				{
-					//Go back one folder			
-					char* pos = strrchr( (char*)currFolder, '/' );
-
-					currFolder[(pos-(char*)currFolder)] = 0; 
-
-					files = SDGetFileList (1);
-					
-					cancel = 0;
-					offsetchanged = true;
-					usleep(300000);
-					continue;
-				}
-			}
-			else if (doall)
-			{
-				doall = WaitPromptChoice("Are you sure you want to restore -ALL- files from this folder?", "Yes", "No");
-				if (!doall)
-				{
-					//Restore All files (from current folder)	
-					for ( selected = folderCount; selected < files; selected++ ) {
-						/*** Restore files ***/
-						sprintf(buffer, "[%d/%d] Reading from FAT device", selected+1, files);
-						ShowAction(buffer);
-						if (SDLoadMCImage ((char*)filelist[selected]))
-						{
-							sprintf(buffer, "[%d/%d] Saving to MC slot %s", selected+1, files, (MEM_CARD) ? "B" : "A");
-							ShowAction(buffer);
-							if (!CardWriteFile (MEM_CARD))
-							{
-								strncpy(text, (char*)filelist[selected], 32);
-								text[32]='\0';
-								sprintf(buffer, "Error during restore (%s). Continue?", text);
-								doall = WaitPromptChoice(buffer, "Yes", "No");
-								if (doall)
-								{
-									WaitPrompt ("Restore action cancelled due to error!");
-									return;
-								}
-							}
-						}
-						else
-						{
-							WaitPrompt ("Error reading image");
-							return;
-						}
-					}
-
-					WaitPrompt("Full card restore done!");
-					return;
-				}
-				else
-				{
-					return;
-				}
-			}
-			else
-			{
-				//Check if selection is folder
-				char folder[1024];
-				sprintf (folder, "%s:/%s/%s",fatpath, currFolder, (char*)filelist[selected]);
-		
-				if(isdir_sd(folder) == 1)
-				{
-					//Enter folder
-					sprintf((char*)currFolder, "%s/%s", currFolder, (char*)filelist[selected]);
-
-					files = SDGetFileList (1);
-					if (!files)
-					{
-						WaitPrompt("Folder is empty!");
-						
-						//Go back again			
-						char* pos = strrchr( (char*)currFolder, '/' );
-
-						currFolder[(pos-(char*)currFolder)] = 0; 
-
-						files = SDGetFileList (1);
-					}
-					
-					offsetchanged = true;
-					usleep(300000);
-					continue;
-				}
-				else //Selection is a file
-				{
-					ShowAction ("Reading from FAT device");
-					if (SDLoadMCImage ((char*)filelist[selected]))
-					{
-						ShowAction ("Updating Memory Card");
-						if (CardWriteFile (MEM_CARD))
-						{
-							WaitPrompt ("Restore Complete");
-							return;
-						}
-						else
-						{
-							WaitPrompt ("Error during restore");
-							return;
-						}
-					}
-					else
-					{
-						WaitPrompt ("Error reading image");
-						return;
-					}
-				}
-			}
-		}
-	}
-    return;
-}
-
-/****************************************************************************
 * RawBackupMode -SD Mode
 *
 * Perform backup of full memory card (in raw format) to a SD Card.
@@ -1058,29 +1886,23 @@ void SD_RestoreMode ()
 void SD_RawBackupMode ()
 {
 	s32 writen = 0;
-	char msg[64];
-	
-	displaypath = 0;
-	
-	clearRightPane();
 
-	DrawText(394,224,"___________________");	
-	DrawText(394,248,"R A W   B a c k u p");
-	DrawText(454,268,"M o d e");
-	DrawText(394,272,"___________________");
-	
-	setfontsize (14);	
-	writeStatusBar("Reading memory card... ", "");
-
-	if (BackupRawImage(MEM_CARD, &writen) == 1)
-	{
-		sprintf(msg, "Backup complete! Wrote %d bytes to FAT device",writen);
-		WaitPrompt(msg);
-	}else{
-
-		WaitPrompt("Backup failed!");
+	if (!probe_memory_card(MEM_CARD)) {
+		UI_Message("RAW backup", "Selected memory card is no longer detected.",
+			"Insert the card and start the operation again.");
+		return;
 	}
+	UI_Progress("Creating RAW backup", "Reading memory card", 0, 1);
+	if (BackupRawImage(MEM_CARD, &writen) == 1) {
+		char result[80];
 
+		UI_Progress("Creating RAW backup", "Finalizing backup", 1, 1);
+		snprintf(result, sizeof(result), "%d bytes written to storage.", writen);
+		UI_Message("RAW backup complete", "Memory card backup completed successfully.", result);
+	} else {
+		UI_Message("RAW backup failed", "Memory card backup could not be created.",
+			"Check memory card, storage space, and filesystem.");
+	}
 }
 
 /****************************************************************************
@@ -1091,117 +1913,97 @@ void SD_RawBackupMode ()
 void SD_RawRestoreMode ()
 {
 	int files;
-	int selected;
-	char msg[64];
+	int selected = 0;
+	char review[96];
+	char detail[96];
+	char result[80];
 	s32 writen = 0;
+	u32 image_size;
 	int i;
-	int inProgress = 1;
+	ui_list_action action;
 
-	displaypath = 1;
-
-	clearRightPane();
-	DrawText(380,130,"R A W   R e s t o r e");
-	DrawText(450,150,"M o d e");
-	DrawText(380,154,"_____________________");
-
-	writeStatusBar("Reading files... ", "");
-	
-	//Curr Folder to default
-	sprintf((char*)currFolder, "MCBACKUP");
-	
-	files = SDGetFileList (0);
-
-	setfontsize (14);
-	writeStatusBar("Pick a file using UP or DOWN", "Press A to restore to Memory Card ");
-
-	if (!files)
-	{
-		WaitPrompt ("No raw backups in FAT device to restore !");
-	}else
-	{
-		while(inProgress == 1)
-		{
-			setfontsize (14);
-			writeStatusBar("Pick a file using UP or DOWN", "Press A to restore to Memory Card ") ;
-			
-			//It will wait here until user selected a file
-			selected = ShowSelector (0);
-
-			if (cancel)
-			{
-				if (strcmp((char*)currFolder, "MCBACKUP") == 0)
-				{
-					WaitPrompt ("Restore action cancelled !");
-					return;
-				}
-				else
-				{
-					//Go back one folder			
-					char* pos = strrchr( (char*)currFolder, '/' );
-
-					currFolder[(pos-(char*)currFolder)] = 0; 
-
-					files = SDGetFileList (0);
-					
-					cancel = 0;
-					offsetchanged = true;
-					usleep(300000);
-					continue;
-				}
-			}
-			else
-			{
-				//Check if selection is folder
-				char folder[1024];
-				sprintf (folder, "%s:/%s/%s",fatpath, currFolder, (char*)filelist[selected]);
-		
-				if(isdir_sd(folder) == 1)
-				{
-					//Enter folder
-					sprintf((char*)currFolder, "%s/%s", currFolder, (char*)filelist[selected]);
-
-					files = SDGetFileList (0);
-					if (!files)
-					{
-						WaitPrompt("Folder is empty!");
-						
-						//Go back again			
-						char* pos = strrchr( (char*)currFolder, '/' );
-
-						currFolder[(pos-(char*)currFolder)] = 0; 
-
-						files = SDGetFileList (0);
-					}
-					
-					offsetchanged = true;
-					usleep(300000);
-					continue;
-				}
-				else //Selection is a file
-				{
+	snprintf((char *)currFolder, sizeof(currFolder), "%s", MCSAVES);
+	for (;;) {
+		files = SDGetFileList(0);
+		if (files <= 0) {
+			UI_Message("RAW restore", "No RAW backups in this folder.",
+				"Use a complete RAW, GCP, or MCI image in MCBACKUP.");
+			if (!leave_backup_folder())
+				return;
+			selected = 0;
+			continue;
+		}
+		if (files > 1024)
+			files = 1024;
+		action = UI_SaveList("Restore RAW image", (char *)currFolder, filelist,
+			files, &selected, NULL, -1);
+		if (action == UI_LIST_BACK) {
+			if (!leave_backup_folder())
+				return;
+			selected = 0;
+			continue;
+		}
+		if (action != UI_LIST_OPEN)
+			continue;
+		if (!filelist_entry_is_valid(selected, files))
+			continue;
+		if (storage_entry_is_folder((char *)filelist[selected])) {
+			if (!enter_backup_folder((char *)filelist[selected]))
+				UI_Message("RAW restore", "Folder path is too long.",
+					"Choose a folder with a shorter path.");
+			selected = 0;
+			continue;
+		}
+		if (!ValidateRawImage(MEM_CARD, (char *)filelist[selected], &image_size)) {
+			UI_Message("RAW restore", "Image is invalid for this memory card.",
+				"Check image type, file size, and destination card capacity.");
+			continue;
+		}
+		if (!SDLoadCardImageHeader((char *)filelist[selected])) {
+			UI_Message("RAW restore", "Image header is invalid or unreadable.",
+				"GCMM-EX cannot verify the image Flash ID.");
+			continue;
+		}
+		getserial(imageserial);
+		sramex = __SYS_LockSramEx();
+		if (!sramex) {
+			UI_Message("RAW restore blocked", "Could not read the console Flash ID.",
+				"GCMM-EX will not offer an unsafe bypass.");
+			continue;
+		}
+		__SYS_UnlockSramEx(0);
+		snprintf(review, sizeof(review), "Restore %.42s to Memory Card %c.",
+			(char *)filelist[selected], MEM_CARD == CARD_SLOTA ? 'A' : 'B');
+		snprintf(detail, sizeof(detail),
+			"%u bytes will overwrite every save on the destination card.", image_size);
+		if (!UI_ConfirmDestructive("Review RAW restore", review, detail, "Restore RAW image"))
+			continue;
+		if (!probe_memory_card(MEM_CARD)) {
+			UI_Message("RAW restore", "Selected memory card is no longer detected.",
+				"Insert the card and start the operation again.");
+			continue;
+		}
 #ifdef FLASHIDCHECK
-					//Now imageserial and sramex.flash_id[MEM_CARD] variables should hold the proper information
-					for (i=0;i<12;i++){
-						if (imageserial[i] != sramex->flash_id[MEM_CARD][i]){
-							WaitPrompt ("Card and image flash ID don't match !");
-							return;
-						}
-					}
-#endif
-					ShowAction ("Reading from FAT device...");
-					if (RestoreRawImage(MEM_CARD, (char*)filelist[selected], &writen) == 1)
-					{
-						sprintf(msg, "Restore complete! Wrote %d bytes to card",writen);
-						WaitPrompt(msg);
-					}else
-					{
-						WaitPrompt("Restore failed!");
-					}
-				}
+		for (i = 0; i < 12; i++) {
+			if (imageserial[i] != sramex->flash_id[MEM_CARD][i]) {
+				UI_Message("RAW restore blocked", "Card and image Flash IDs do not match.",
+					"GCMM-EX will not offer an unsafe bypass.");
+				return;
 			}
 		}
+#endif
+		UI_Progress("Restoring RAW image", (char *)filelist[selected], 0, 1);
+		if (RestoreRawImage(MEM_CARD, (char *)filelist[selected], &writen) != 1) {
+			UI_Message("RAW restore failed", "Image could not be restored.",
+				"No unsafe retry was attempted.");
+			return;
+		}
+		UI_Progress("Restoring RAW image", (char *)filelist[selected], 1, 1);
+		snprintf(result, sizeof(result), "%d bytes written to Memory Card %c.", writen,
+			MEM_CARD == CARD_SLOTA ? 'A' : 'B');
+		UI_Message("RAW restore complete", "Image restored successfully.", result);
+		return;
 	}
-	return;
 }
 
 /****************************************************************************
@@ -1212,11 +2014,6 @@ int main (int argc, char *argv[])
 
 	have_sd = false;
 	CUR_DEVICE = 0;
-
-#ifdef HW_DOL
-	int *psoid = (int *) 0x80001800;
-	void (*PSOReload) () = (void (*)()) 0x80001800;
-#endif
 
 	Initialise ();	/*** Start video ***/
 	FT_Init ();		/*** Start FreeType ***/
@@ -1306,25 +2103,6 @@ int main (int argc, char *argv[])
 			}
 		}
 #endif
-		//If command line failed to set a CUR_DEVICE, run selector screen
-		if (CUR_DEVICE == 0)
-		{
-			selector_flag = 1;
-			ClearScreen();
-			ShowScreen();
-		
-			CUR_DEVICE = device_select();
-		}
-		
-	}
-	else
-	{
-		//Run device selection screen (will be skipped at first run if there's only one available device)
-		selector_flag = 1;
-		ClearScreen();
-		ShowScreen();
-		
-		CUR_DEVICE = device_select();
 	}
 	
 	if (CUR_DEVICE) have_sd = initFAT(CUR_DEVICE);
@@ -1335,168 +2113,49 @@ int main (int argc, char *argv[])
 
 	selector_flag = 0;
 	skip_selector = 0;
-	for (;;)
-	{
-		/*** Select Mode ***/
-		ClearScreen();
-		setfontsize (FONT_SIZE);
-		freecardbuf();
-		cancel = 0;/******a global value to track action aborted by user pressing button B********/
-		doall = 0;
-		mode = SelectMode ();
+	run_home_menu();
 
-		//Allow memory card selection for some devices
-		if ((mode != 500 ) && (mode != 100) && (mode != 600) && (mode != 1000 ) && (CUR_DEVICE==DEV_WIISD || CUR_DEVICE==DEV_WIIUSB || CUR_DEVICE==DEV_GCSDC || CUR_DEVICE==DEV_GCODE)	){
-			if (WaitPromptChoice ("Please select a memory card slot", "Slot B", "Slot A") == 1)
-			{
-				MEM_CARD = CARD_SLOTA;
-			}else
-			{
-				MEM_CARD = CARD_SLOTB;
-			}
-		}
-
-		/*** Mode == 100 for backup, 200 for restore ***/
-		switch (mode)
-		{
-		case 100 : //User pressed A so keep looping
-			//SMB_BackupMode();
-			//WaitPrompt ("Inactive");
-			break;
-		case 200 : //User wants to delete
-			MC_DeleteMode(MEM_CARD);
-			break;
-		case 300 : //User wants to backup
-			if (have_sd) SD_BackupMode();
-			else WaitPrompt(NOFAT_MSG);
-			break;
-		case 400 : //User wants to restore
-			if (have_sd) SD_RestoreMode();
-			else WaitPrompt(NOFAT_MSG);
-			break;
-		case 500 ://exit
-			ShowAction ("Exiting...");
-#ifdef HW_RVL
-			deinitFAT();
-			//if there's a loader stub load it, if not return to wii menu.
-			if (!!*(u32*)0x80001800){ShowAction ("Exiting...Loader"); exit(1);}
-			else {ShowAction ("Exiting...SysMenu");SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);}
-#else
-			if (psoid[0] == PSOSDLOADID){
-				deinitFAT();
-				ShowAction ("Exiting...Loader");
-				PSOReload ();
-			}
-			if (have_sd){
-				char exitdol[64];
-				sprintf(exitdol, "%s:/autoexec.dol",fatpath);
-				FILE *fp = fopen(exitdol, "rb");
-				if (fp) {
-					ShowAction ("Exiting...autoexec.dol");
-					fseek(fp, 0, SEEK_END);
-					int size = ftell(fp);
-					fseek(fp, 0, SEEK_SET);
-					if ((size > 0) && (size < (AR_GetSize() - (64*1024)))) {
-						u8 *dol = (u8*) memalign(32, size);
-						if (dol) {
-							fread(dol, 1, size, fp);
-							fclose(fp);
-							deinitFAT();
-							DOLtoARAM(dol, 0, NULL);
-						}
-						WaitPrompt ("Something went wrong with autoexec.dol. Press A to reboot.");
-						//We shouldn't reach this point
-						if (dol != NULL) free(dol);
-					}
-				fclose(fp);//We shouldn't reach here either
-				}
-				char msg[64];
-				sprintf(msg, "Couldn't open %s. Press A to reboot.", exitdol);
-				WaitPrompt (msg);
-			}
-			deinitFAT();
-			ShowAction ("Exiting...Reboot");
-			SYS_ResetSystem(SYS_HOTRESET, 0, 0);
-#endif
-			break; //PSO_Reload
-		case 600 : //User wants to backup full card
-			/*
-			if (have_sd) SD_BackupModeAllFiles();
-			else WaitPrompt("Reboot aplication with an SD card");
-			*/
-			break;
-		case 700 : //Raw backup mode
-			if (have_sd)
-			{
-				SD_RawBackupMode();
-			}else
-			{
-				WaitPrompt(NOFAT_MSG);
-			}
-			break;
-		case 800 : //Raw restore mode
-			//These two lines are a work around for the second call of CARD_Probe to detect a newly inserted memory card
-			CARD_Probe(MEM_CARD);
-			VIDEO_WaitVSync ();
-			if (CARD_Probe(MEM_CARD) > 0)
-			{
-				if (have_sd) SD_RawRestoreMode();
-				else WaitPrompt(NOFAT_MSG);
-
-			}else if (MEM_CARD)
-			{
-				WaitPrompt("Please insert a memory card in slot B");
-			}else
-			{
-				WaitPrompt("Please insert a memory card in slot A");
-			}
-			break;
-		case 900 : //Format card mode
-			//These two lines are a work around for the second call of CARD_Probe to detect a newly inserted memory card
-			CARD_Probe(MEM_CARD);
-			VIDEO_WaitVSync ();
-			if (CARD_Probe(MEM_CARD) > 0)
-			{
-				clearRightPane();
-				DrawText(390,224,"____________________");
-				DrawText(390,248,"F o r m a t  C a r d");
-				DrawText(460,268,"M o d e");
-				DrawText(390,272,"____________________");				
-				MC_FormatMode(MEM_CARD);
-
-			}else if (MEM_CARD)
-			{
-				WaitPrompt("Please insert a memory card in slot B");
-			}else
-			{
-				WaitPrompt("Please insert a memory card in slot A");
-			}
-			break;
-		case 1000: //Device select mode
-			deinitFAT();
-			WaitPrompt("Device unmounted. Insert/Remove any devices now.");
-			selector_flag = 1;
-			ShowScreen();
-			ClearScreen();
-			detect_devices();
-			CUR_DEVICE = device_select();
-			if (CUR_DEVICE) have_sd = initFAT(CUR_DEVICE);
-			//Set correct memory card slot when SD gecko is selected device
-			if (CUR_DEVICE == DEV_GCSDB) MEM_CARD = 0;
-			else if (CUR_DEVICE == DEV_GCSDA) MEM_CARD = 1;
-			selector_flag = 0;
-			break;
-		}
-
-		offsetchanged = true;
-	}
-	while (1);
-	//Should never reach this point...
-#ifdef HW_RVL
+	#ifdef HW_RVL
+	deinitFAT();
 	//if there's a loader stub load it, if not return to wii menu.
 	if (!!*(u32*)0x80001800) exit(1);
 	else SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
 #else
+	if (*(int *)0x80001800 == PSOSDLOADID) {
+		void (*PSOReload)(void) = (void (*)(void))0x80001800;
+		deinitFAT();
+		PSOReload();
+	}
+	if (have_sd) {
+		char exitdol[64];
+		FILE *fp;
+		long size;
+		u8 *dol;
+		int length;
+
+		length = snprintf(exitdol, sizeof(exitdol), "%s:/autoexec.dol", fatpath);
+		fp = length >= 0 && length < (int)sizeof(exitdol) ?
+			fopen(exitdol, "rb") : NULL;
+		if (fp) {
+			if (fseek(fp, 0, SEEK_END) == 0 && (size = ftell(fp)) > 0 &&
+				fseek(fp, 0, SEEK_SET) == 0 &&
+				size < (long)(AR_GetSize() - (64 * 1024))) {
+				dol = memalign(32, (size_t)size);
+				if (dol) {
+					if (fread(dol, 1, (size_t)size, fp) == (size_t)size) {
+						fclose(fp);
+						fp = NULL;
+						deinitFAT();
+						DOLtoARAM(dol, 0, NULL);
+					}
+					free(dol);
+				}
+			}
+			if (fp)
+				fclose(fp);
+		}
+	}
+	deinitFAT();
 	SYS_ResetSystem(SYS_HOTRESET, 0, 0);
 #endif
 	return 0;

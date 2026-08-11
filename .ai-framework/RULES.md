@@ -1,90 +1,127 @@
 # Regras do Projeto para IA
 
-Este arquivo é a fonte oficial de regras para análise, implementação, documentação e tomada de decisão no GCMM-EX.
+Este arquivo é fonte oficial para análise, implementação, documentação e
+validação do GCMM-EX. Reflete estado atual do repositório: versão `v1.0`,
+GameCube e Wii, código em GNU C17.
 
-## Contexto e objetivos
+## Objetivo e escopo
 
-- GCMM-EX é um fork comunitário do GCMM, escrito principalmente em C, para gerenciar saves e imagens RAW de cartões de memória do Nintendo GameCube.
-- Preservar compatibilidade com hardware real de Nintendo GameCube e Nintendo Wii é requisito obrigatório.
-- Priorizar manutenção, segurança dos dados, compatibilidade com toolchains atuais e baixo uso de memória.
-- Preservar funcionalidades existentes, créditos históricos e comportamento compatível com o projeto original, salvo quando a mudança for explicitamente solicitada e documentada.
+- GCMM-EX gerencia saves e imagens completas de cartões de memória de
+  GameCube. Suporta backup, restauração, cópia, movimentação, exclusão e
+  formatação.
+- Compatibilidade com hardware real de GameCube e Wii é obrigatória. Não
+  trocar comportamento seguro por conveniência de emulador.
+- Preservar formatos, créditos, licenças, comportamento legado necessário e
+  suporte existente, salvo pedido explícito documentado.
+- Prioridades: integridade dos dados, compatibilidade, baixo uso de memória,
+  manutenção e interface legível em TV SD.
 
-## Stack e build
+## Plataformas, armazenamento e formatos
 
-- Usar devkitPPC/devkitPro, libogc2, libdvm, PowerPC FreeType (`ppc-freetype`) e zlib.
-- Manter o código C compatível com `gnu17`. Não migrar silenciosamente para C23, C++ ou outra linguagem.
-- Manter `Makefile.gc` e `Makefile.wii` alinhados quando uma mudança compartilhada afetar compilação, bibliotecas, flags ou assets.
-- Preservar as quatro variantes oficiais e seus diretórios intermediários separados:
-  - GameCube claro: `make gc` -> `releases/gcmm_GC.dol`.
-  - Wii claro: `make wii` -> `releases/gcmm_WII.dol`.
-  - GameCube escuro: `make gc-dark` -> `releases/gcmm_GC_dark.dol`.
-  - Wii escuro: `make wii-dark` -> `releases/gcmm_WII_dark.dol`.
-- Não versionar artefatos gerados em `build_GC*`, `build_WII*` ou `releases/`.
-- A biblioteca de filesystem continua vinculada como `-lfat`, mas deve ser fornecida por `libogc2-libdvm`. Não substituir por `libogc2-libfat`, pois isso remove a configuração atual de detecção de partições e exFAT.
+- Wii: SD frontal, USB e SD Gecko nos slots A/B.
+- GameCube: SD2SP2, SD Gecko nos slots A/B e GC Loader.
+- Filesystems: FAT12, FAT16, FAT32 e exFAT via `libdvm`.
+- Formatos de save: GCI, GCS e SAV. Imagens completas: RAW, GCP e MCI.
+- Manter montagem via `libdvm`: detectar partições, selecionar primeiro volume
+  suportado e desmontar todos volumes montados do dispositivo.
+- Não alterar layout binário, tamanho, packing ou semântica de GCI/GCS/SAV/
+  RAW/GCP/MCI sem validação de compatibilidade binária e teste em hardware.
 
-## Arquitetura e plataformas
+## Arquitetura
 
-- Manter código compartilhado em `source/` e código exclusivo do GameCube em `source/aram/`.
-- Manter assets compartilhados em `data/`, assets do GameCube em `data-gc/` e assets do Wii em `data-wii/`.
-- Isolar comportamento específico por plataforma com os guards existentes: `HW_DOL` para GameCube e `HW_RVL` para Wii.
-- Isolar tema com `LIGHT_MODE` e `DARK_MODE`; qualquer mudança visual deve ser verificada nos dois temas e nas duas plataformas.
-- Não remover suporte atual:
-  - Wii: SD frontal, USB e SD Gecko nos slots A/B.
-  - GameCube: SD2SP2, SD Gecko nos slots A/B e GC Loader.
-  - Filesystems: FAT12, FAT16, FAT32 e exFAT.
-- Preservar a montagem por `libdvm`, a detecção do filesystem por partição, a escolha do primeiro volume suportado e a desmontagem de todos os volumes montados pelo dispositivo.
+- Código compartilhado fica em `source/`; UI em `source/ui/`; armazenamento e
+  cartão em `source/storage/`; código ARAM exclusivo de GameCube em
+  `source/aram/`.
+- Assets: compartilhados em `data/`, GameCube em `data-gc/`, Wii em
+  `data-wii/`.
+- Usar guards existentes: `HW_DOL` para GameCube e `HW_RVL` para Wii.
+- `main.c` coordena ciclo da aplicação, montagem e fluxos; UI não monta mídia
+  nem escreve cartão; módulos de armazenamento não controlam layout da UI.
+- `storage/mcard.c` possui `FileBuffer` alinhado de 2 MiB. Preservar
+  `ATTRIBUTE_ALIGN(32)` em buffers de CARD, vídeo, DMA ou ARAM.
+- Não aumentar buffers globais, caches ou consumo de memória sem justificar
+  impacto nas duas plataformas.
 
-## Regras de código
+## Build e dependências
 
-- Escrever código claro, organizado e de fácil manutenção, respeitando a arquitetura e o estilo legado do arquivo alterado.
-- Preferir mudanças pequenas e localizadas. Não introduzir dependências, abstrações ou reescritas amplas sem necessidade comprovada.
-- Tratar limites de buffer, tamanhos de arquivo, alinhamento e retorno de APIs explicitamente. Hardware alvo possui memória limitada; o GameCube dispõe de 24 MB de MEM1 e o projeto já mantém um buffer de arquivos de 2 MB.
-- Preservar `ATTRIBUTE_ALIGN(32)` e demais requisitos de alinhamento em buffers usados por DMA, CARD, vídeo ou ARAM.
-- Não aumentar caches, buffers globais ou uso de memória sem justificar o impacto nas duas plataformas.
-- Validar índices, comprimentos, offsets, leituras e escritas antes de acessar buffers ou arquivos. Fechar arquivos e desmontar dispositivos em todos os caminhos relevantes, inclusive erros.
-- Não alterar formatos GCI, GCS, SAV, RAW, GCP ou MCI sem verificar compatibilidade binária e comportamento em hardware real.
-- Manter textos de interface, documentação pública e comentários novos em inglês dos EUA, seguindo o padrão atual do projeto. Estas regras internas permanecem em português.
+- Toolchain: devkitPro/devkitPPC, libogc2, libdvm, PowerPC FreeType
+  (`ppc-freetype`) e zlib.
+- Compilar em GNU C17. Não migrar silenciosamente para C23, C++ ou outra
+  linguagem.
+- `-lfat` continua linkado, fornecido por `libogc2-libdvm`. Não substituir por
+  `libogc2-libfat`, pois removeria suporte a partições e exFAT.
+- Configurar `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS` e `PATH` no `.env` local.
+  Instalação padrão usa `/opt/devkitpro`.
+- Alvos oficiais:
+  - `make gc` gera `releases/gcmm_ex_GC.dol` e usa `build_GC/`.
+  - `make wii` gera `releases/gcmm_ex_WII.dol` e usa `build_WII/`.
+  - `make` gera ambos; `make clean` remove artefatos gerados.
+- Alterações compartilhadas de build, flags, bibliotecas ou assets devem manter
+  `Makefile.gc` e `Makefile.wii` alinhados.
+- Não versionar `build_GC*`, `build_WII*`, `releases/`, `.env` nem dados locais
+  de emulador ou cartões de teste.
 
 ## Segurança de dados
 
-- Tratar backup, restauração, exclusão e formatação como operações sensíveis; restauração RAW e formatação são destrutivas.
-- Nunca reduzir confirmações, validações, verificações de escrita ou avisos existentes em fluxos destrutivos.
-- Manter `FLASHIDCHECK` habilitado. Desativá-lo pode corromper cartões oficiais.
-- Exigir validação de tipo, tamanho, cabeçalho, capacidade e destino antes de restaurar saves ou imagens completas.
-- Preservar os patches de serial e checksum usados por saves protegidos, incluindo F-Zero GX e Phantasy Star Online.
-- Não orientar remoção de cartão de memória, SD ou USB durante leitura ou escrita.
+- Backup, restauração, exclusão, movimentação e formatação são operações
+  sensíveis. RAW restore e formatação são destrutivos.
+- Nunca remover confirmações, validações, verificação de escrita, mensagens de
+  erro ou avisos de fluxos destrutivos.
+- Manter `FLASHIDCHECK` habilitado. Desativá-lo pode corromper cartões
+  oficiais.
+- Antes de restaurar, validar tipo, tamanho, cabeçalho, capacidade, destino e
+  identidade do cartão. Preservar tratamento de serial e checksum para saves
+  protegidos, incluindo F-Zero GX e Phantasy Star Online.
+- Uma movimentação deve copiar, verificar payload de destino e só então apagar
+  origem.
+- Validar índices, comprimentos, offsets, tamanhos de arquivo, retornos de API
+  e componentes de caminho antes de acessar buffers ou mídia. Fechar arquivos
+  e desmontar dispositivos também em caminhos de erro.
+- Nunca orientar remoção de cartão, SD ou USB durante leitura ou escrita.
 
-## Layout e interação
+## Código, UI e documentação
 
-- Seguir os padrões visuais existentes antes de criar novas abordagens.
-- Reutilizar funções, componentes gráficos, fontes, backgrounds e convenções de posicionamento atuais.
-- Manter consistência de tipografia, cores, espaçamento, contraste, estados e hierarquia entre temas e plataformas.
-- Preservar acesso equivalente pelas entradas suportadas: controle de GameCube e Wii Remote quando aplicável.
-- Não ocultar informações críticas, prompts de confirmação, erros, dispositivo selecionado ou progresso de operações.
-- Considerar overscan e legibilidade em telas de definição padrão; não assumir layout web, mouse, teclado, alta resolução ou touch.
+- Preferir mudanças pequenas, localizadas e compatíveis com estilo do arquivo.
+  Não introduzir dependências, abstrações ou reescritas amplas sem necessidade.
+- Manter um único tema visual. Não criar flags, variantes ou condicionais de
+  tema.
+- Reutilizar padrões de UI, fontes, assets e convenções existentes. Preservar
+  contraste, estados desabilitados, progresso, dispositivo selecionado, erros
+  e confirmações nas duas plataformas.
+- Preservar acesso por controle de GameCube e Wii Remote/Classic Controller
+  onde aplicável. Considerar overscan e legibilidade em TV SD.
+- Textos públicos, textos de UI e novos comentários de código devem ser em
+  inglês dos EUA. Estas regras internas ficam em português.
+- Atualizar `README.md` quando comandos, dependências, suporte, outputs ou
+  estrutura do repositório mudarem. Registrar mudanças relevantes em
+  `changelog.md`, seção `Unreleased`.
+- Alterar `source/main.c` (`appversion`) e `hbc/meta.xml` juntos somente em
+  mudança explícita de versão/release.
+- Preservar GPLv3, avisos de licença, autoria e créditos históricos.
 
-## Documentação e versão
+## Dolphin e hardware
 
-- Atualizar `README.md` quando comandos, dependências, plataformas, dispositivos, filesystems, outputs ou estrutura do repositório mudarem.
-- Registrar mudanças relevantes em `changelog.md`, na seção `Unreleased`.
-- Manter `source/main.c` (`appversion`) e `hbc/meta.xml` sincronizados somente em uma alteração explícita de versão/release.
-- Não alterar número de versão ou data de release como efeito colateral de outra tarefa.
-- Usar os artefatos em `openspec/` quando a tarefa possuir uma especificação ativa; não contradizer decisões registradas nela sem atualizar a especificação.
-- Preservar GPLv3, avisos de licença, autoria, créditos herdados e marcações exigidas em fontes modificadas.
+- `scripts/run-dolphin.sh` usa perfil isolado em `tests/dolphin/user/`; nunca
+  apontar testes para perfil normal, cartão, SD ou USB reais.
+- Usar apenas cartões virtuais descartáveis em cópia, exclusão, restauração RAW
+  e formatação. Dolphin é smoke test de UI e I/O básico, não valida hardware.
+- Dolphin não emula SD Gecko/GC2SD no Slot B. Fluxos de armazenamento GC2SD,
+  SD Gecko, SD2SP2, GC Loader, Flash ID, remoção física, timing de controle e
+  overscan exigem hardware real.
+- Para smoke test Wii, usar SD virtual descartável. Para smoke test GameCube,
+  tratar cartões virtuais como teste de cartão, não de adaptador SD.
 
-## Validação
+## Validação e guard rails
 
-- Compilar todas as variantes afetadas. Para mudanças compartilhadas, validar `make gc`, `make wii`, `make gc-dark` e `make wii-dark`.
-- Para mudanças exclusivas de plataforma ou tema, validar ao menos todas as variantes que usam o trecho ou asset alterado.
-- Executar `make clean` antes de uma validação final quando houver risco de objetos ou assets obsoletos.
-- Não afirmar que uma build ou teste passou sem executar o comando correspondente. Se o toolchain ou hardware não estiver disponível, registrar claramente a limitação.
-- Como não há suíte automatizada no repositório, complementar a compilação com revisão dos fluxos afetados e, quando possível, teste em hardware real ou emulador.
-- Em mudanças de armazenamento ou cartão de memória, testar também falhas previsíveis: mídia ausente, filesystem sem suporte, arquivo inválido, espaço insuficiente, erro de leitura/escrita e cancelamento do usuário.
-
-## Guard rails
-
-- Não executar comandos diretamente em ambiente de produção ou em hardware do usuário. Fornecer instruções para execução manual quando necessário.
-- Não realizar ações destrutivas ou irreversíveis sem confirmação explícita e descrição do impacto.
-- Não apagar nem sobrescrever alterações preexistentes do usuário.
-- Não introduzir mudanças apenas por preferência pessoal.
-- Não ignorar impactos em segurança, desempenho, usabilidade, manutenção, compatibilidade ou consistência visual.
+- Compilar alvos afetados após configurar `.env`; mudanças compartilhadas exigem
+  `make gc` e `make wii`. Rodar `make clean` antes de validação final quando
+  houver risco de artefatos obsoletos.
+- Não afirmar build ou teste sem executar comando correspondente. Informar
+  claramente limitações de toolchain, emulador ou hardware.
+- Em mudanças de armazenamento/cartão, revisar ao menos: mídia ausente,
+  filesystem não suportado, arquivo inválido, espaço insuficiente, falha de
+  leitura/escrita e cancelamento.
+- Não apagar, sobrescrever ou publicar alterações preexistentes sem autorização
+  explícita. Não executar operações em hardware do usuário.
+- Não fazer mudanças apenas por preferência. Considerar sempre segurança,
+  compatibilidade, desempenho, manutenção e consistência visual.
