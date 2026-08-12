@@ -528,19 +528,35 @@ int device_select()
 
 static bool card_slot_is_reserved(int slot)
 {
-	return (slot == CARD_SLOTA && CUR_DEVICE == DEV_GCSDA) ||
-		(slot == CARD_SLOTB && CUR_DEVICE == DEV_GCSDB);
+	return (slot == CARD_SLOTA && DEVICES[DEV_GCSDA] != DEV_ND) ||
+		(slot == CARD_SLOTB && DEVICES[DEV_GCSDB] != DEV_ND);
 }
 
 static bool probe_memory_card(int slot)
 {
+	s32 result;
+	s32 card_size = 0;
+	s32 sector_size = 0;
+	int tries = 0;
+
 	if (card_slot_is_reserved(slot))
 		return false;
 
-	/* CARD_Probe may need a second poll after card insertion. */
-	CARD_Probe(slot);
-	VIDEO_WaitVSync();
-	return CARD_Probe(slot) > 0;
+	/* CARD_Probe only reports EXI presence, so an unselected SD Gecko would
+	 * otherwise be mistaken for a memory card and fail later with
+	 * CARD_ERROR_WRONGDEVICE. CARD_ProbeEx validates the device type and may
+	 * remain busy briefly while a newly inserted device is debounced. */
+	do {
+		result = CARD_ProbeEx(slot, &card_size, &sector_size);
+		if (result == CARD_ERROR_READY)
+			return card_size > 0 && sector_size > 0;
+		if (result != CARD_ERROR_BUSY)
+			return false;
+		VIDEO_WaitVSync();
+		tries++;
+	} while (tries < 30);
+
+	return false;
 }
 
 static void card_status(char *status, size_t status_size, int slot)

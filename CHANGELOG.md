@@ -5,6 +5,13 @@ This file documents user-visible changes included in GCMM-EX DOL releases.
 GCMM-EX is a GameCube memory-card manager with complete memory-card
 management and a modern workflow for GameCube and Wii.
 
+## [Unreleased]
+
+### Fixed
+
+- SD Gecko and GC2SD adapters are no longer probed as memory cards when the
+  home screen opens, preventing a `CARD_ERROR_WRONGDEVICE` startup error.
+
 ## [v1.0.0 (alpha)]
 
 ### Added
