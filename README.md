@@ -5,6 +5,12 @@
 GCMM-EX is a GameCube memory-card manager with complete memory-card
 management and a modern workflow for GameCube and Wii.
 
+<p align="center">
+  <img src="docs/screenshots/wii-home.png" alt="GCMM-EX home screen running on Wii in Dolphin" width="30%">
+  <img src="docs/screenshots/wii-save.png" alt="GCMM-EX save management screen running on Wii in Dolphin" width="30%">
+  <img src="docs/screenshots/wii-advanced.png" alt="GCMM-EX advanced options screen running on Wii in Dolphin" width="30%">
+</p>
+
 **Current version:** v1.0.0 (alpha)
 
 - Backup / restore / copy / move
