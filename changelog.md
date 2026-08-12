@@ -14,8 +14,8 @@ meaning, dates, and contributor credits.
 
 ### Added
 
-- Configured the isolated Dolphin profile to seed Slot A from local GCI test
-  saves and Slot B from a local RAW test image without modifying source files.
+- Configured the isolated Dolphin profile to seed Slot B from the faithful
+  local RAW test image without modifying source files.
 
 - Added exFAT support for every storage device: Wii SD, Wii USB, SD Gecko, SD2SP2, and GC Loader. Cards larger than 32 GB no longer need to be reformatted as FAT32.
 - Added task-oriented home, settings, memory-card selection, save details, and
@@ -25,6 +25,25 @@ meaning, dates, and contributor credits.
 
 ### Changed
 
+- Updated release version to v1.0.0 (alpha).
+- Updated the save manager with selected-save banner previews and a compact,
+  single-row controller footer.
+- Refined the in-app information and credits layout for TV readability.
+- Improved FreeType glyph blending so small UI text renders with smoother,
+  fuller edges.
+
+### Fixed
+
+- Fixed full-card RAW transfer progress so it advances with completed card
+  blocks instead of remaining at its initial state until the operation ends.
+- Opening an operation with no mounted storage now shows the storage-device
+  chooser directly, including a retry path when mounting fails.
+- Fixed restore-list banner previews so they follow the highlighted backup
+  before it is selected.
+- Consolidated action confirmations into one review screen while retaining
+  operation details and destructive-action warnings.
+- Reduced footer height, moved Exit to the home menu, and removed it from
+  Advanced options.
 - Updated the in-app credits for Alex Ishida and GCMM by suloku.
 - Updated Homebrew Channel metadata to match the README's application
   description.

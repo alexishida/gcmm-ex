@@ -18,6 +18,7 @@ typedef enum {
 	UI_LIST_CONTEXT,
 	UI_LIST_PREVIOUS_DEVICE,
 	UI_LIST_NEXT_DEVICE,
+	UI_LIST_PREVIEW,
 	UI_LIST_DEVICE_REMOVED
 } ui_list_action;
 
@@ -36,16 +37,23 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 ui_list_action UI_SaveList(const char *title, const char *subtitle,
 	u8 entries[][1024], int entry_count, int *selection, bool *marked,
 	int card_slot);
+/** Supply banner data for the currently selected memory-card save. */
+void UI_SetSavePreview(u16 banner_format, const u16 *rgb_banner,
+	const u8 *ci_banner, const u16 *palette, const char *title, const char *source);
+/** Clear the selected-save preview when no valid banner is available. */
+void UI_ClearSavePreview(void);
 /** Show standard confirmation prompt. */
 bool UI_Confirm(const char *title, const char *message,
 	const char *detail, const char *confirm_label);
-/** Show destructive confirmation prompt with deliberate confirmation flow. */
+/** Show destructive confirmation prompt with warning details. */
 bool UI_ConfirmDestructive(const char *title, const char *message,
 	const char *detail, const char *confirm_label);
 /** Show message until user dismisses it. */
 void UI_Message(const char *title, const char *message, const char *detail);
 /** Display details until user dismisses them. */
 void UI_Details(const char *title, const char *const lines[], int line_count);
+/** Display application identity, credits, and license information. */
+void UI_About(const char *author, const char *foundation);
 /** Set labels used by transfer-progress screen; strings must outlive display. */
 void UI_SetTransferState(const char *source, const char *destination);
 /** Render transfer progress. current is clamped to zero through total. */

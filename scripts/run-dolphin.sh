@@ -78,30 +78,20 @@ set_ini_value() {
 prepare_test_cards() {
   local config="$test_user_dir/Config/Dolphin.ini"
   # Dolphin resolves custom card paths to region-specific names. Keep the
-  # expected USA suffix so it opens the seeded test cards, not empty cards it
-  # creates for the region at launch.
-  local card_a_dir="$test_user_dir/GC/GCMM-EX/Test Card A/USA"
+  # expected USA suffix so it opens the RAW card instead of creating an empty
+  # regional card at launch.
+  local raw_source="$memorycards_dir/backup.USA.raw"
   local card_b_raw="$test_user_dir/GC/GCMM-EX/Test Card B.USA.raw"
-  local gci_files=()
-  local raw_files=()
-  local config_card_a_dir=$card_a_dir
   local config_card_b_raw=$card_b_raw
 
-  mkdir -p "$(dirname -- "$config")" "$card_a_dir"
+  mkdir -p "$(dirname -- "$config")" "$(dirname -- "$card_b_raw")"
 
-  if [ -d "$memorycards_dir" ]; then
-    shopt -s nullglob
-    gci_files=("$memorycards_dir"/*.gci)
-    raw_files=("$memorycards_dir"/*.raw)
-    shopt -u nullglob
-
-    if [ "${#gci_files[@]}" -gt 0 ] && ! find "$card_a_dir" -maxdepth 1 -type f -iname '*.gci' -print -quit | grep -q .; then
-      cp -- "${gci_files[@]}" "$card_a_dir/"
+  if [ ! -e "$card_b_raw" ]; then
+    if [ ! -f "$raw_source" ]; then
+      echo "Missing Dolphin test card: $raw_source" >&2
+      exit 1
     fi
-
-    if [ "${#raw_files[@]}" -gt 0 ] && [ ! -e "$card_b_raw" ]; then
-      cp -- "${raw_files[0]}" "$card_b_raw"
-    fi
+    cp -- "$raw_source" "$card_b_raw"
   fi
 
   if [[ "$dolphin" == *.exe ]]; then
@@ -109,14 +99,12 @@ prepare_test_cards() {
       echo "Windows Dolphin requires WSL path conversion. Set DOLPHIN to a native build." >&2
       exit 1
     fi
-    config_card_a_dir=$(wslpath -w "$card_a_dir")
     config_card_b_raw=$(wslpath -w "$card_b_raw")
   fi
 
   touch "$config"
-  set_ini_value "$config" Core SlotA 8
+  set_ini_value "$config" Core SlotA 255
   set_ini_value "$config" Core SlotB 1
-  set_ini_value "$config" Core GCIFolderAPath "$config_card_a_dir"
   set_ini_value "$config" Core MemcardBPath "$config_card_b_raw"
 }
 

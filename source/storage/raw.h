@@ -28,8 +28,13 @@ typedef struct {
 	u8 Unused2[7680];    /**< Remaining card system area. */
 } __attribute__((__packed__)) Header;
 
+/** Receives completed and total RAW card blocks during a full-card transfer. */
+typedef void (*RawProgressCallback)(void *context, u32 completed, u32 total);
+
 /** Release temporary RAW-image buffers allocated by the subsystem. */
 void freecardbuf(void);
+/** Set or clear the optional RAW transfer-progress callback. */
+void RawSetProgressCallback(RawProgressCallback callback, void *context);
 /** Derive the plain card serial from a loaded RAW system header. */
 void getserial(u8 *serial);
 /** Return a card serial suitable for source/destination identity checks. */

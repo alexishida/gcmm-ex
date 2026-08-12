@@ -20,6 +20,8 @@ u32 ShowBMP(u8 *bmpfile);
 u32 DrawBMPAt(u8 *bmpfile, int x, int y);
 /** Draw decoded BGR banner preview supplied by bannerload.c. */
 void ShowBanner(u8 *banner);
+/** Draw a decoded save banner at an overscan-safe UI position. */
+void DrawBannerAt(const u8 *banner, int x, int y, int scale);
 /** Draw decoded BGR icon preview supplied by bannerload.c. */
 void ShowIcon(u8 *icon);
 /** Clear next framebuffer and make it displayable. */

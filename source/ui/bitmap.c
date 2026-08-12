@@ -289,6 +289,34 @@ void ShowBanner(u8 *banner) {
     }
 }
 
+void DrawBannerAt(const u8 *banner, int x, int y, int scale)
+{
+	int row;
+	int column;
+	int output_width;
+	int output_height;
+	int framebuffer_words;
+
+	if (!banner || scale < 1)
+		return;
+	output_width = CARD_BANNER_W * scale;
+	output_height = CARD_BANNER_H * scale;
+	if (x < 0 || y < 0 || (x & 1) || x + output_width > (int)vmode->fbWidth ||
+		y + output_height > (int)vmode->xfbHeight)
+		return;
+	framebuffer_words = vmode->fbWidth / 2;
+	for (row = 0; row < output_height; row++) {
+		const u8 *source_row = banner + (row / scale) * CARD_BANNER_W * 3;
+		u32 *destination = xfb[whichfb] + (y + row) * framebuffer_words + x / 2;
+		for (column = 0; column < output_width; column += 2) {
+			const u8 *first = source_row + (column / scale) * 3;
+			const u8 *second = source_row + ((column + 1) / scale) * 3;
+			*destination++ = CvtRGB(first[2], first[1], first[0],
+				second[2], second[1], second[0]);
+		}
+	}
+}
+
 void ShowIcon(u8 *icon) {
     u32 fbwidth, width, height;
     u8 *bgr;

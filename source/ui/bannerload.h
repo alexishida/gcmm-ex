@@ -16,6 +16,11 @@
 void bannerloadRGB(u16 *gamebanner);
 /** Decode an indexed banner and palette into the preview bitmap buffer. */
 void bannerloadCI(u8 *gamebanner, u16 *tlutbanner);
+/** Decode and draw a RGB5A3 save banner at a UI position. */
+void DrawBannerRGBAt(const u16 *gamebanner, int x, int y, int scale);
+/** Decode and draw an indexed save banner at a UI position. */
+void DrawBannerCIAt(const u8 *gamebanner, const u16 *tlutbanner,
+	int x, int y, int scale);
 /** Decode a tiled RGB5A3 icon into the preview bitmap buffer. */
 void iconloadRGB(u16 *gameicon);
 /** Decode an indexed icon and palette into the preview bitmap buffer. */

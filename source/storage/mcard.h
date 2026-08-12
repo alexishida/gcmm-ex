@@ -37,6 +37,13 @@ void CardListFiles(void);
 int CardReadFileHeader(int slot, int id);
 /** Copy selected metadata and a NUL-terminated 64-byte comment preview. */
 int MCardGetSaveDetails(int slot, int id, card_direntry *entry, char comments[65]);
+/** Load only metadata, banner, and comments for a list preview. */
+int MCardLoadSavePreview(int slot, int id, card_direntry *entry, char comments[65]);
+/** Shared decoded-preview source buffers owned by the card module. */
+extern u16 bannerdata[CARD_BANNER_W * CARD_BANNER_H] ATTRIBUTE_ALIGN(32);
+extern u8 bannerdataCI[CARD_BANNER_W * CARD_BANNER_H] ATTRIBUTE_ALIGN(32);
+extern u16 tlutbanner[256] ATTRIBUTE_ALIGN(32);
+extern u8 CommentBuffer[64] ATTRIBUTE_ALIGN(32);
 /** Load selected GCI header and complete payload into FileBuffer. */
 int CardReadFile(int slot, int id);
 

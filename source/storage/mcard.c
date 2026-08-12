@@ -626,6 +626,111 @@ int MCardGetSaveDetails(int slot, int id, card_direntry *entry, char comments[65
 	return 1;
 }
 
+static int read_preview_range(size_t offset, void *destination, size_t length,
+	int file_size)
+{
+	size_t aligned_offset;
+	size_t aligned_end;
+	size_t read_length;
+	int err;
+
+	if (!destination || !length || file_size < 0 || offset > (size_t)file_size ||
+		length > (size_t)file_size - offset)
+		return 0;
+	aligned_offset = offset & ~(size_t)0x1ff;
+	aligned_end = (offset + length + 0x1ff) & ~(size_t)0x1ff;
+	if (aligned_end > (size_t)file_size || aligned_end < aligned_offset)
+		return 0;
+	read_length = aligned_end - aligned_offset;
+	if (read_length > MAXFILEBUFFER - MCDATAOFFSET)
+		return 0;
+	err = CARD_Read(&CardFile, FileBuffer + MCDATAOFFSET, (u32)read_length,
+		(u32)aligned_offset);
+	if (err < 0)
+		return 0;
+	memcpy(destination, FileBuffer + MCDATAOFFSET + offset - aligned_offset, length);
+	return 1;
+}
+
+int MCardLoadSavePreview(int slot, int id, card_direntry *entry, char comments[65])
+{
+	char company[3];
+	char gamecode[5];
+	char filename[CARD_FILENAMELEN + 1];
+	int err;
+	int file_size;
+	u32 sector_size;
+	u16 banner_format;
+	int opened = 0;
+	int mounted = 0;
+	int result = 0;
+
+	if (!entry || !comments || !MCardIsValidSaveIndex(id))
+		return 0;
+	memset(entry, 0, sizeof(*entry));
+	memset(comments, 0, 65);
+	memset(bannerdata, 0, sizeof(bannerdata));
+	memset(bannerdataCI, 0, sizeof(bannerdataCI));
+	memset(tlutbanner, 0, sizeof(tlutbanner));
+	memcpy(company, CardList[id].company, 2);
+	memcpy(gamecode, CardList[id].gamecode, 4);
+	memcpy(filename, CardList[id].filename, CARD_FILENAMELEN);
+	company[2] = '\0';
+	gamecode[4] = '\0';
+	filename[CARD_FILENAMELEN] = '\0';
+
+	err = MountCard(slot);
+	if (err < 0)
+		goto cleanup;
+	mounted = 1;
+	err = CARD_GetSectorSize(slot, &sector_size);
+	if (err < 0 || sector_size == 0 || sector_size % 32 != 0)
+		goto cleanup;
+	CARD_SetCompany(company);
+	CARD_SetGamecode(gamecode);
+	err = CARD_Open(slot, filename, &CardFile);
+	if (err < 0)
+		goto cleanup;
+	opened = 1;
+#ifdef STATUSOGC
+	err = CARD_GetStatus(slot, CardFile.filenum, &CardStatus);
+	if (err < 0)
+		goto cleanup;
+	GCIMakeHeader();
+#else
+	err = CARD_GetStatusEx(slot, CardFile.filenum, &gci);
+	if (err < 0)
+		goto cleanup;
+#endif
+	file_size = CardFile.len;
+	if (file_size < 0 || file_size % sector_size != 0)
+		goto cleanup;
+	banner_format = gci.banner_fmt & CARD_BANNER_MASK;
+	if (banner_format == CARD_BANNER_RGB) {
+		if (!read_preview_range(gci.icon_addr, bannerdata, sizeof(bannerdata), file_size))
+			goto cleanup;
+	} else if (banner_format == CARD_BANNER_CI) {
+		if (!read_preview_range(gci.icon_addr, bannerdataCI, sizeof(bannerdataCI),
+				file_size) ||
+			!read_preview_range((size_t)gci.icon_addr + sizeof(bannerdataCI),
+				tlutbanner, sizeof(tlutbanner), file_size))
+			goto cleanup;
+	}
+	/* Comments are optional. A malformed comment offset must not hide a valid
+	 * banner or prevent navigation through the card directory. */
+	read_preview_range(gci.comment_addr, comments, 64, file_size);
+	comments[64] = '\0';
+	memcpy(entry, &gci, sizeof(*entry));
+	result = 1;
+
+cleanup:
+	if (opened)
+		CARD_Close(&CardFile);
+	if (mounted)
+		CARD_Unmount(slot);
+	return result;
+}
+
 /****************************************************************************
 * CardReadFile
 *

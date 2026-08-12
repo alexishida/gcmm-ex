@@ -61,8 +61,34 @@ s8 write_data = 0;
 s8 erase_data = 0;
 Header cardheader;
 
+static RawProgressCallback raw_progress_callback;
+static void *raw_progress_context;
+static int raw_progress_percent = -1;
+
 extern u8 currFolder[260];
 extern char fatpath[8];
+
+void RawSetProgressCallback(RawProgressCallback callback, void *context)
+{
+	raw_progress_callback = callback;
+	raw_progress_context = context;
+	raw_progress_percent = -1;
+}
+
+static void raw_report_progress(u32 completed, u32 total)
+{
+	int percent;
+
+	if (!raw_progress_callback || total == 0)
+		return;
+	if (completed > total)
+		completed = total;
+	percent = (int)(completed * 100 / total);
+	if (percent == raw_progress_percent && completed != total)
+		return;
+	raw_progress_percent = percent;
+	raw_progress_callback(raw_progress_context, completed, total);
+}
 
 static int raw_storage_entry_name_is_safe(const char *name)
 {
@@ -345,6 +371,7 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 		CARD_Unmount(slot);
 		return -1;
 	}
+	raw_report_progress(0, BlockCount);
 	//printf("dumping...\n");
 	int card_addr = SectorSize*current_block;
 	while(current_block < BlockCount)
@@ -391,6 +418,7 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 			total_written += SectorSize;
 			if(bytes_writen != NULL)
 				*bytes_writen = total_written;
+			raw_report_progress(current_block, BlockCount);
 			//printf("\rWriting : %u bytes of %u",writen+SectorSize,read);
 			snprintf(msg2, sizeof(msg2),
 				"Writing...: Block %d of %d (%d bytes of %u)", current_block,
@@ -599,6 +627,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 				CARD_Unmount(slot);
 				return -1;
 			}
+			raw_report_progress(0, BlockCount);
 			
 			s32 upblock = 0;
 			s32 write_len = SectorSize;
@@ -820,6 +849,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 					{
 						current_block++;
 						upblock = 0;
+						raw_report_progress(current_block, BlockCount);
 					}
 				}
 				else //card_write failed

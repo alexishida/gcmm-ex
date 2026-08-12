@@ -2,12 +2,20 @@
   <img src="hbc/icon.png" alt="GCMM-EX logo" width="192" height="72">
 </p>
 
-GCMM-EX is a new GameCube memory-card manager for Nintendo GameCube and Wii.
+GCMM-EX is a GameCube memory-card manager with complete memory-card
+management and a modern workflow for GameCube and Wii.
 
-**Current version:** 1.0
+**Current version:** v1.0.0 (alpha)
 
-It backs up, restores, copies, moves, and removes GameCube saves while
-preserving the compatibility requirements of real console hardware.
+- Backup / restore / copy / move
+- GCI backup, GCI GCS SAV restore
+- RAW, GCP and MCI card images
+- Both memory-card slots
+- Banners and animated icons
+- SD, SD Gecko, SD2SP2, USB, GC Loader
+
+Every operation preserves the compatibility requirements of real console
+hardware.
 
 ## A new project built on proven code
 
@@ -52,7 +60,7 @@ serial and checksum handling required for restoration to another card.
 The storage layer supports FAT12, FAT16, FAT32, and exFAT through libdvm.
 FAT32 remains the most broadly compatible option for homebrew use.
 
-GCMM-EX selects storage from **Settings → Storage devices**. After changing a
+GCMM-EX selects storage from **Others → Storage devices**. After changing a
 device, return to that screen to detect and mount it again. Avoid connecting
 more than one USB storage device in Wii mode.
 
@@ -82,8 +90,8 @@ Run `releases/gcmm_ex_GC.dol` from a compatible loader, such as Swiss or SDLoad.
 | Help | `Start` | `HOME` / Classic `+` |
 
 The home screen provides **Manage saves**, **Back up memory card**, **Restore
-backup**, and **Settings**. Complete-card backup, restoration, and formatting
-are under **Settings → Advanced options**.
+backup**, **Others**, and **Exit**. Complete-card backup, restoration, and formatting
+are under **Others → Advanced options**.
 
 ## Save-data safety
 
@@ -213,4 +221,4 @@ Nano/Excelsiior, bm123456, themanuel, DacoTaco, Extrems, fincs, ChaN,
 dragonbane0, Zephiles, Ralf, f3bandit, and other contributors.
 
 See [changelog.md](changelog.md) for release history. GCMM-EX is distributed
-under the [GNU General Public License v3.0](COPYING).
+under the [MIT License](LICENSE.md).

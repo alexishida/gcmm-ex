@@ -20,7 +20,9 @@
 #endif
 
 #include "bitmap.h"
+#include "bannerload.h"
 #include "freetype.h"
+#include "gci.h"
 #include "ui.h"
 #include "ui_logo_bmp.h"
 
@@ -37,7 +39,7 @@
 #define UI_WARNING     getcolour(220, 165, 53)
 #define UI_DESTRUCTIVE getcolour(186, 68, 78)
 #define UI_DISABLED    122, 139, 166
-#define UI_PAGE_SIZE   11
+#define UI_PAGE_SIZE   7
 
 typedef enum {
 	UI_KEY_NONE = 0,
@@ -57,6 +59,12 @@ typedef enum {
 static bool ui_destructive_confirmation;
 static const char *ui_transfer_source = "Not selected";
 static const char *ui_transfer_destination = "Not selected";
+static u16 ui_preview_format;
+static const u16 *ui_preview_rgb;
+static const u8 *ui_preview_ci;
+static const u16 *ui_preview_palette;
+static const char *ui_preview_title;
+static const char *ui_preview_source;
 
 #ifdef HW_RVL
 extern bool power;
@@ -65,6 +73,7 @@ void PowerOff(void);
 
 extern u32 retraceCount;
 extern const char appversion[];
+extern GXRModeObj *vmode;
 
 static void ui_wait_release(void)
 {
@@ -234,14 +243,14 @@ static ui_key ui_read_key(void)
 static void ui_begin(const char *title, const char *subtitle)
 {
 	ClearScreen();
-	DrawBoxFilled(24, 24, 615, 398, UI_PANEL);
-	DrawBox(24, 24, 615, 398, UI_BORDER);
+	DrawBoxFilled(24, 24, 615, 418, UI_PANEL);
+	DrawBox(24, 24, 615, 418, UI_BORDER);
 	DrawBoxFilled(24, 24, 615, 69, UI_PANEL_ALT);
 	DrawBoxFilled(24, 68, 615, 70, UI_ACCENT);
 	DrawBMPAt((u8 *)ui_logo_bmp, 482, 36);
 	setfontsize(12);
 	setfontcolour(UI_MUTED);
-	DrawText(432, 55, (char *)appversion);
+	DrawText(370, 55, (char *)appversion);
 
 	setfontsize(20);
 	setfontcolour(UI_TEXT);
@@ -256,7 +265,69 @@ static void ui_begin(const char *title, const char *subtitle)
 
 static void ui_footer(const char *help)
 {
-	writeStatusBar((char *)help, "START Help");
+	DrawBoxFilled(0, 424, vmode->fbWidth - 1, vmode->xfbHeight - 1, UI_PANEL_ALT);
+	DrawBoxFilled(0, 424, vmode->fbWidth - 1, 427, UI_ACCENT);
+	setfontsize(12);
+	setfontcolour(UI_TEXT);
+	DrawText(54, 462, (char *)help);
+	DrawBoxFilled(492, 443, 548, 465, UI_SELECTED);
+	DrawBox(492, 443, 548, 465, UI_BORDER);
+	setfontcolour(45, 196, 196);
+	DrawText(500, 461, "START");
+	setfontcolour(UI_TEXT);
+	DrawText(555, 462, "Help");
+	setfontsize(14);
+}
+
+void UI_ClearSavePreview(void)
+{
+	ui_preview_format = 0;
+	ui_preview_rgb = NULL;
+	ui_preview_ci = NULL;
+	ui_preview_palette = NULL;
+	ui_preview_title = NULL;
+	ui_preview_source = NULL;
+}
+
+void UI_SetSavePreview(u16 banner_format, const u16 *rgb_banner,
+	const u8 *ci_banner, const u16 *palette, const char *title, const char *source)
+{
+	ui_preview_format = banner_format & CARD_BANNER_MASK;
+	ui_preview_rgb = rgb_banner;
+	ui_preview_ci = ci_banner;
+	ui_preview_palette = palette;
+	ui_preview_title = title;
+	ui_preview_source = source;
+}
+
+static void ui_draw_save_preview(void)
+{
+	char title[31];
+
+	DrawBoxFilled(356, 112, 595, 370, UI_PANEL_ALT);
+	DrawBox(356, 112, 595, 370, UI_BORDER);
+	setfontsize(12);
+	setfontcolour(UI_MUTED);
+	DrawText(372, 132, "Selected save");
+	DrawBoxFilled(374, 145, 577, 225, UI_PANEL);
+	DrawBox(374, 145, 577, 225, UI_BORDER);
+	if (ui_preview_format == CARD_BANNER_RGB && ui_preview_rgb) {
+		DrawBannerRGBAt(ui_preview_rgb, 380, 153, 2);
+	} else if (ui_preview_format == CARD_BANNER_CI && ui_preview_ci &&
+		ui_preview_palette) {
+		DrawBannerCIAt(ui_preview_ci, ui_preview_palette, 380, 153, 2);
+	} else {
+		setfontcolour(UI_DISABLED);
+		DrawText(414, 192, "No banner available");
+	}
+	snprintf(title, sizeof(title), "%.30s", ui_preview_title && ui_preview_title[0] ?
+		ui_preview_title : "Save title unavailable");
+	setfontcolour(UI_TEXT);
+	DrawText(372, 257, title);
+	setfontsize(11);
+	setfontcolour(UI_MUTED);
+	DrawText(372, 283, (char *)(ui_preview_source ? ui_preview_source : "Banner preview"));
+	setfontsize(14);
 }
 
 static int ui_marked_count(const bool *marked, int entry_count)
@@ -363,13 +434,14 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 		"Manage saves",
 		"Back up memory card",
 		"Restore backup",
-		"Settings"
+		"Others",
+		"Exit"
 	};
 	int selected = initial_selection;
 	int i;
 	ui_key key;
 
-	if (selected < 0 || selected >= 4)
+	if (selected < 0 || selected >= 5)
 		selected = 0;
 	ui_wait_release();
 	for (;;) {
@@ -386,8 +458,8 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 		setfontsize(14);
 		setfontcolour(UI_TEXT);
 		DrawText(42, 216, "What would you like to do?");
-		for (i = 0; i < 4; i++) {
-			int y = 251 + i * 35;
+		for (i = 0; i < 5; i++) {
+			int y = 246 + i * 31;
 			if (i == selected) {
 				DrawBoxFilled(42, y - 22, 595, y + 9, UI_SELECTED);
 				DrawBoxFilled(42, y - 22, 47, y + 9, UI_ACCENT);
@@ -403,9 +475,9 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
-			selected = selected > 0 ? selected - 1 : 3;
+			selected = selected > 0 ? selected - 1 : 4;
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
-			selected = selected < 3 ? selected + 1 : 0;
+			selected = selected < 4 ? selected + 1 : 0;
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return selected;
@@ -449,7 +521,7 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 		for (i = first; i < entry_count && i < first + UI_PAGE_SIZE; i++) {
 			int y = 118 + (i - first) * 24;
 			if (i == *selection) {
-				DrawBoxFilled(42, y - 17, 595, y + 6, UI_SELECTED);
+				DrawBoxFilled(42, y - 17, 340, y + 6, UI_SELECTED);
 				DrawBoxFilled(42, y - 17, 47, y + 6, UI_ACCENT);
 				setfontcolour(UI_TEXT);
 			} else {
@@ -461,6 +533,7 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 				marked && marked[i] ? "[x]" : "[ ]", (char *)entries[i]);
 			DrawText(58, y, label);
 		}
+		ui_draw_save_preview();
 		snprintf(page, sizeof(page), "Page %d/%d", *selection / UI_PAGE_SIZE + 1,
 			(entry_count + UI_PAGE_SIZE - 1) / UI_PAGE_SIZE);
 		setfontsize(12);
@@ -478,8 +551,10 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
 			*selection = *selection > 0 ? *selection - 1 : entry_count - 1;
+			return UI_LIST_PREVIEW;
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
 			*selection = *selection + 1 < entry_count ? *selection + 1 : 0;
+			return UI_LIST_PREVIEW;
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return UI_LIST_OPEN;
@@ -504,24 +579,86 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 	}
 }
 
+static void ui_draw_confirmation_detail(const char *detail)
+{
+	char line[72];
+	size_t length;
+	size_t split;
+
+	if (!detail || !detail[0])
+		return;
+	length = strnlen(detail, 140);
+	if (length < sizeof(line)) {
+		DrawText(58, 151, (char *)detail);
+		return;
+	}
+	split = sizeof(line) - 1;
+	while (split && detail[split] != ' ')
+		split--;
+	if (!split)
+		split = sizeof(line) - 1;
+	memcpy(line, detail, split);
+	line[split] = '\0';
+	DrawText(58, 145, line);
+	while (detail[split] == ' ')
+		split++;
+	DrawText(58, 166, (char *)detail + split);
+}
+
 static bool ui_confirm(const char *title, const char *message,
 	const char *detail, const char *confirm_label, bool destructive)
 {
 	const char *items[2] = { "Cancel", confirm_label };
 	bool previous_style = ui_destructive_confirmation;
-	int choice;
+	int selected = 0;
+	int i;
+	ui_key key;
 
 	ui_destructive_confirmation = destructive;
-	choice = UI_Menu(title, message, items, 2, 0,
-		"A Confirm selection   B Cancel", true);
+	ui_wait_release();
+	for (;;) {
+		ui_begin(title, message);
+		DrawBoxFilled(42, 112, 595, 184, UI_PANEL_ALT);
+		setfontsize(12);
+		setfontcolour(UI_MUTED);
+		ui_draw_confirmation_detail(detail);
+		setfontsize(14);
+		for (i = 0; i < 2; i++) {
+			int y = 229 + i * 34;
 
-	if (detail && detail[0] && choice == 1) {
-		const char *final_items[2] = { "Cancel", confirm_label };
-		choice = UI_Menu("Final confirmation", detail, final_items, 2, 0,
-			"Review carefully. A Confirm   B Cancel", true);
+			if (i == selected) {
+				DrawBoxFilled(42, y - 20, 595, y + 7,
+					destructive ? UI_DESTRUCTIVE : UI_SELECTED);
+				DrawBoxFilled(42, y - 20, 47, y + 7,
+					destructive ? UI_WARNING : UI_ACCENT);
+				setfontcolour(UI_TEXT);
+				DrawText(60, y, ">");
+			} else {
+				setfontcolour(UI_MUTED);
+			}
+			DrawText(82, y, (char *)items[i]);
+		}
+		ui_footer("A Confirm selection   B Cancel");
+		ShowScreen();
+
+		key = ui_read_key();
+		if (key == UI_KEY_UP || key == UI_KEY_LEFT || key == UI_KEY_DOWN ||
+			key == UI_KEY_RIGHT) {
+			selected = selected ? 0 : 1;
+		} else if (key == UI_KEY_CONFIRM) {
+			ui_wait_release();
+			break;
+		} else if (key == UI_KEY_BACK) {
+			selected = 0;
+			ui_wait_release();
+			break;
+		} else if (key == UI_KEY_HELP) {
+			UI_Help();
+		}
+		VIDEO_WaitVSync();
 	}
 	ui_destructive_confirmation = previous_style;
-	return choice == 1;
+	return selected == 1;
 }
 
 bool UI_Confirm(const char *title, const char *message,
@@ -575,6 +712,68 @@ void UI_Details(const char *title, const char *const lines[], int line_count)
 				setfontcolour(UI_MUTED);
 			DrawText(58, 143 + i * 27, (char *)lines[i]);
 		}
+		ui_footer("A Close   B Back");
+		ShowScreen();
+		key = ui_read_key();
+		if (key == UI_KEY_CONFIRM || key == UI_KEY_BACK) {
+			ui_wait_release();
+			return;
+		}
+		VIDEO_WaitVSync();
+	}
+}
+
+void UI_About(const char *author, const char *foundation)
+{
+	static const char *const ui_about_left[3] = {
+		"Backup / restore / copy / move",
+		"GCI backup, GCI GCS SAV restore",
+		"RAW, GCP and MCI card images"
+	};
+	static const char *const ui_about_right[3] = {
+		"Both memory-card slots",
+		"Banners and animated icons",
+		"SD, SD Gecko, SD2SP2, USB, GC Loader"
+	};
+	ui_key key;
+	int i;
+
+	ui_wait_release();
+	for (;;) {
+		ui_begin("About GCMM-EX", "GameCube memory-card manager");
+		DrawBoxFilled(42, 112, 595, 350, UI_PANEL_ALT);
+		DrawBox(42, 112, 595, 350, UI_BORDER);
+		DrawBoxFilled(58, 126, 579, 176, UI_PANEL);
+		DrawBoxFilled(58, 126, 63, 176, UI_ACCENT);
+		setfontsize(18);
+		setfontcolour(UI_TEXT);
+		DrawText(78, 152, "Complete memory-card management");
+		setfontsize(12);
+		setfontcolour(UI_MUTED);
+		DrawText(78, 170, "A modern workflow for GameCube and Wii.");
+
+		setfontsize(12);
+		setfontcolour(UI_MUTED);
+		for (i = 0; i < 3; i++) {
+			DrawText(58, 202 + i * 22, (char *)ui_about_left[i]);
+			DrawText(325, 202 + i * 22, (char *)ui_about_right[i]);
+		}
+		DrawHLine(58, 579, 262, UI_BORDER);
+
+		setfontsize(11);
+		setfontcolour(45, 196, 196);
+		DrawText(58, 280, "CREATED BY");
+		DrawText(325, 280, "BASED ON");
+		setfontsize(16);
+		setfontcolour(UI_TEXT);
+		DrawText(58, 302, (char *)(author && author[0] ? author : "Unknown"));
+		setfontsize(14);
+		DrawText(325, 302, (char *)(foundation && foundation[0] ? foundation : "GCMM"));
+
+		setfontsize(11);
+		setfontcolour(UI_MUTED);
+		DrawText(58, 330, "MIT License");
+		setfontsize(14);
 		ui_footer("A Close   B Back");
 		ShowScreen();
 		key = ui_read_key();

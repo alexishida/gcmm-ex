@@ -66,11 +66,24 @@ char fatpath[8];
      can be unmounted again ***/
 static char fatbase[8];
 
-const char appversion[] = "v1.0";
+const char appversion[] = "v1.0.0 (alpha)";
 
 /* Legacy I/O workflows retained while their task screens are migrated. */
 void SD_RawBackupMode(void);
 void SD_RawRestoreMode(void);
+
+typedef struct {
+	const char *title;
+	const char *item;
+} raw_progress_context;
+
+static void show_raw_progress(void *context, u32 completed, u32 total)
+{
+	raw_progress_context *progress = context;
+
+	if (progress)
+		UI_Progress(progress->title, progress->item, completed, total);
+}
 
 /*** 2D Video Globals ***/
 GXRModeObj *vmode;		/*** Graphics Mode Object ***/
@@ -634,11 +647,28 @@ static int select_other_memory_card(int source_slot)
 
 static bool require_storage(void)
 {
+	int device;
+
 	if (have_sd)
 		return true;
-	UI_Message("Storage device", "No mounted storage device.",
-		"Choose a storage device in Settings before starting this operation.");
-	return false;
+
+	detect_devices();
+	for (;;) {
+		/* An operation must always let the user confirm the storage target. */
+		skip_selector = 0;
+		device = device_select();
+		if (!device)
+			return false;
+
+		CUR_DEVICE = device;
+		have_sd = initFAT(CUR_DEVICE);
+		if (have_sd)
+			return true;
+
+		UI_Message("Storage device", "Could not mount selected device.",
+			"Check the device and choose another one, or press B to cancel.");
+		detect_devices();
+	}
 }
 
 static bool storage_entry_name_is_valid(const char *name)
@@ -804,6 +834,20 @@ static bool leave_backup_folder(void)
 }
 
 static bool write_save_file(int slot);
+static void clean_detail_text(char *out, size_t out_size, const u8 *in, size_t in_size);
+
+static void update_restore_preview(int selected, int count, char title[65])
+{
+	if (!filelist_entry_is_valid(selected, count) ||
+		storage_entry_is_folder((char *)filelist[selected]) ||
+		!SDLoadMCImageHeader((char *)filelist[selected])) {
+		UI_ClearSavePreview();
+		return;
+	}
+	clean_detail_text(title, 65, (const u8 *)CommentBuffer, sizeof(CommentBuffer));
+	UI_SetSavePreview(gci.banner_fmt, bannerdata, bannerdataCI, tlutbanner, title,
+		"Banner from backup file");
+}
 
 static void restore_backup_file(const char *filename)
 {
@@ -879,6 +923,7 @@ static void run_restore_backup(void)
 	int count;
 	int selected = 0;
 	char subtitle[96];
+	char preview_title[65];
 	ui_list_action action;
 
 	if (!require_storage())
@@ -897,6 +942,7 @@ static void run_restore_backup(void)
 			count = 1024;
 		snprintf(subtitle, sizeof(subtitle), "%s: %.62s", device_name(CUR_DEVICE),
 			(char *)currFolder);
+		update_restore_preview(selected, count, preview_title);
 		action = UI_SaveList("Restore backup", subtitle, filelist, count,
 			&selected, NULL, -1);
 		if (action == UI_LIST_BACK) {
@@ -905,6 +951,8 @@ static void run_restore_backup(void)
 			selected = 0;
 			continue;
 		}
+		if (action == UI_LIST_PREVIEW)
+			continue;
 		if (action != UI_LIST_OPEN)
 			continue;
 		if (!filelist_entry_is_valid(selected, count))
@@ -1372,8 +1420,11 @@ static void run_manage_saves(void)
 	int selected_count;
 	int batch_result;
 	card_direntry selected_entry;
+	card_direntry preview_entry;
 	char delete_message[96];
 	char delete_detail[96];
+	char preview_comments[65];
+	char preview_title[65];
 	ui_list_action result;
 
 	if (have_sd) {
@@ -1414,6 +1465,14 @@ static void run_manage_saves(void)
 			slot == CARD_SLOTA ? 'A' : 'B', count);
 
 	for (;;) {
+		if (MCardLoadSavePreview(slot, selected, &preview_entry, preview_comments)) {
+			clean_detail_text(preview_title, sizeof(preview_title),
+				(const u8 *)preview_comments, sizeof(preview_comments) - 1);
+			UI_SetSavePreview(preview_entry.banner_fmt, bannerdata, bannerdataCI,
+				tlutbanner, preview_title, "Banner from memory card");
+		} else {
+			UI_ClearSavePreview();
+		}
 		result = UI_SaveList("Manage saves", subtitle, filelist, count, &selected,
 			marked, slot);
 		if (result == UI_LIST_DEVICE_REMOVED) {
@@ -1423,6 +1482,8 @@ static void run_manage_saves(void)
 		}
 		if (result == UI_LIST_BACK)
 			return;
+		if (result == UI_LIST_PREVIEW)
+			continue;
 		if (result == UI_LIST_PREVIOUS_DEVICE || result == UI_LIST_NEXT_DEVICE) {
 			int next_slot = slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
 
@@ -1589,33 +1650,17 @@ static void run_advanced_menu(void)
 	static const char *const items[] = {
 		"Full memory-card RAW backup",
 		"Restore RAW/GCP/MCI image",
-		"Format memory card",
-		"Exit and loader behavior"
+		"Format memory card"
 	};
 	int choice;
 	int slot;
 	char format_message[80];
 
 	for (;;) {
-		choice = UI_Menu("Advanced options", "High-risk operations", items, 4, 0,
+		choice = UI_Menu("Advanced options", "High-risk operations", items, 3, 0,
 			"A Select   B Back", true);
 		if (choice < 0)
 			return;
-		if (choice == 3) {
-			static const char *const lines[] = {
-				"Exit behavior",
-#ifdef HW_RVL
-				"Wii: returns to the loader when present.",
-				"Otherwise returns to the Wii System Menu.",
-#else
-				"GameCube: returns to PSO/SD loader when present.",
-				"Otherwise attempts autoexec.dol, then reboots.",
-#endif
-				"Use B on the home screen to exit GCMM-EX."
-			};
-			UI_Details("Exit and loader behavior", lines, 4);
-			continue;
-		}
 		if (!require_storage() && choice != 2)
 			continue;
 
@@ -1668,32 +1713,22 @@ static void run_advanced_menu(void)
 
 static void show_information(void)
 {
-	const char *lines[6];
-	char version[48];
-
-	snprintf(version, sizeof(version), "GCMM-EX %s", appversion);
-	lines[0] = version;
-	lines[1] = "New interface and workflow";
-	lines[2] = "Author: Alex Ishida";
-	lines[3] = "Based on GCMM by suloku";
-	lines[4] = "Memory-card formats, compatibility, and hardware safety";
-	lines[5] = "See README/changelog for credits. GNU GPL v3.0.";
-	UI_Details("Information and credits", lines, 6);
+	UI_About("Alex Ishida", "GCMM by suloku");
 }
 
-static void run_settings_menu(void)
+static void run_others_menu(void)
 {
 	static const char *const items[] = {
 		"Storage devices",
+		"Advanced options",
 		"Controls and help",
-		"Information and credits",
-		"Advanced options"
+		"About"
 	};
 	int choice;
 	int device;
 
 	for (;;) {
-		choice = UI_Menu("Settings", "GCMM-EX settings", items, 4, 0,
+		choice = UI_Menu("Others", "Additional GCMM-EX options", items, 4, 0,
 			"A Select   B Back", true);
 		if (choice < 0)
 			return;
@@ -1718,11 +1753,11 @@ static void run_settings_menu(void)
 				have_sd = initFAT(CUR_DEVICE);
 			}
 		} else if (choice == 1) {
-			UI_Help();
-		} else if (choice == 2) {
-			show_information();
-		} else {
 			run_advanced_menu();
+		} else if (choice == 2) {
+			UI_Help();
+		} else {
+			show_information();
 		}
 	}
 }
@@ -1753,7 +1788,13 @@ static void run_home_menu(void)
 			continue;
 		}
 		if (choice == 3) {
-			run_settings_menu();
+			run_others_menu();
+			continue;
+		}
+		if (choice == 4) {
+			if (UI_Confirm("Exit GCMM-EX", "Return to loader or system menu?", NULL,
+				"Exit"))
+				return;
 			continue;
 		}
 		if (!require_storage())
@@ -1886,14 +1927,18 @@ Initialise (void)
 void SD_RawBackupMode ()
 {
 	s32 writen = 0;
+	raw_progress_context progress = { "Creating RAW backup", "Reading memory card" };
+	int success;
 
 	if (!probe_memory_card(MEM_CARD)) {
 		UI_Message("RAW backup", "Selected memory card is no longer detected.",
 			"Insert the card and start the operation again.");
 		return;
 	}
-	UI_Progress("Creating RAW backup", "Reading memory card", 0, 1);
-	if (BackupRawImage(MEM_CARD, &writen) == 1) {
+	RawSetProgressCallback(show_raw_progress, &progress);
+	success = BackupRawImage(MEM_CARD, &writen) == 1;
+	RawSetProgressCallback(NULL, NULL);
+	if (success) {
 		char result[80];
 
 		UI_Progress("Creating RAW backup", "Finalizing backup", 1, 1);
@@ -1919,9 +1964,11 @@ void SD_RawRestoreMode ()
 	char result[80];
 	s32 writen = 0;
 	u32 image_size;
+	raw_progress_context progress;
 	int i;
 	ui_list_action action;
 
+	UI_ClearSavePreview();
 	snprintf((char *)currFolder, sizeof(currFolder), "%s", MCSAVES);
 	for (;;) {
 		files = SDGetFileList(0);
@@ -1943,6 +1990,8 @@ void SD_RawRestoreMode ()
 			selected = 0;
 			continue;
 		}
+		if (action == UI_LIST_PREVIEW)
+			continue;
 		if (action != UI_LIST_OPEN)
 			continue;
 		if (!filelist_entry_is_valid(selected, files))
@@ -1992,13 +2041,16 @@ void SD_RawRestoreMode ()
 			}
 		}
 #endif
-		UI_Progress("Restoring RAW image", (char *)filelist[selected], 0, 1);
+		progress.title = "Restoring RAW image";
+		progress.item = (char *)filelist[selected];
+		RawSetProgressCallback(show_raw_progress, &progress);
 		if (RestoreRawImage(MEM_CARD, (char *)filelist[selected], &writen) != 1) {
+			RawSetProgressCallback(NULL, NULL);
 			UI_Message("RAW restore failed", "Image could not be restored.",
 				"No unsafe retry was attempted.");
 			return;
 		}
-		UI_Progress("Restoring RAW image", (char *)filelist[selected], 1, 1);
+		RawSetProgressCallback(NULL, NULL);
 		snprintf(result, sizeof(result), "%d bytes written to Memory Card %c.", writen,
 			MEM_CARD == CARD_SLOTA ? 'A' : 'B');
 		UI_Message("RAW restore complete", "Image restored successfully.", result);

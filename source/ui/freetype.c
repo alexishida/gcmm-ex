@@ -44,7 +44,7 @@ FT_Library ftlibrary;
 FT_Face face;
 FT_GlyphSlot slot;
 FT_UInt glyph_index;
-static int fonthi, fontlo;
+static u8 font_y, font_cb, font_cr;
 
 /*** From video subsystem ***/
 extern int screenheight;
@@ -121,6 +121,11 @@ void setfontsize (int pixelsize)
 		printf ("Error setting pixel sizes!");
 }
 
+static u8 blend_font_component(u8 background, u8 foreground, u8 coverage)
+{
+	return (u8)((background * (255 - coverage) + foreground * coverage + 127) / 255);
+}
+
 static void DrawCharacter (FT_Bitmap * bmp, FT_Int x, FT_Int y)
 {
 	FT_Int i, j, p, q;
@@ -141,16 +146,26 @@ static void DrawCharacter (FT_Bitmap * bmp, FT_Int x, FT_Int y)
 			spos = (j * 320) + (i >> 1);
 
 			pixel = xfb[whichfb][spos];
-			c = bmp->buffer[q * bmp->width + p];
+			c = bmp->buffer[q * bmp->pitch + p];
 
-			/*** Cool Anti-Aliasing doesn't work too well at hires on GC ***/
-			if (c > 128)
-			{
-				if (i & 1)
-					pixel = (pixel & 0xffff0000) | fontlo;
-				else
-					pixel = ((pixel & 0xffff) | fonthi);
+			/* FreeType gives an 8-bit coverage value. Preserve it instead of
+			 * discarding half of each glyph with a hard threshold: small text
+			 * stays fuller and diagonal strokes no longer look jagged. */
+			if (c) {
+				u8 y_component;
+				u8 cb_component;
+				u8 cr_component;
 
+				if (i & 1) {
+					y_component = blend_font_component((pixel >> 8) & 0xff, font_y, c);
+					pixel = (pixel & 0xffff00ff) | ((u32)y_component << 8);
+				} else {
+					y_component = blend_font_component((pixel >> 24) & 0xff, font_y, c);
+					pixel = (pixel & 0x00ffffff) | ((u32)y_component << 24);
+				}
+				cb_component = blend_font_component((pixel >> 16) & 0xff, font_cb, c);
+				cr_component = blend_font_component(pixel & 0xff, font_cr, c);
+				pixel = (pixel & 0xff00ff00) | ((u32)cb_component << 16) | cr_component;
 				xfb[whichfb][spos] = pixel;
 			}
 		}
@@ -251,8 +266,9 @@ void setfontcolour (u8 r, u8 g, u8 b)
 	u32 fontcolour;
 
 	fontcolour = getcolour(r, g, b);
-	fonthi = fontcolour & 0xffff0000;
-	fontlo = fontcolour & 0xffff;
+	font_y = fontcolour >> 24;
+	font_cb = (fontcolour >> 16) & 0xff;
+	font_cr = fontcolour & 0xff;
 }
 
 /****************************************************************************

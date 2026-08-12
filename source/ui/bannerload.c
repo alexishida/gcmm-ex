@@ -92,16 +92,16 @@ static u32 Decode5A3(u16 val, int row) {
 	return (a<<24)|(b<<16)|(g<<8)|r;
 }
 
-void bannerloadRGB(u16 *gamebanner) {
+static void decode_banner_rgb(const u16 *gamebanner, u8 *image)
+{
 	int y, x, iy, ix;
 	u32 RGBA;
-	u16 *src; //we need this for pointer arithmetic
+	const u16 *src;
 	u32 dst[CARD_BANNER_H*CARD_BANNER_W];
-	u8 m_pImage[CARD_BANNER_H*CARD_BANNER_W*3];
-	
-	src = gamebanner;
-	int row=0;
+	int row = 0;
 	int count = 0;
+
+	src = gamebanner;
 	for (y = 0; y < CARD_BANNER_H; y += 4)
 	{
 		for (x = 0; x < CARD_BANNER_W; x += 4)
@@ -130,32 +130,45 @@ void bannerloadRGB(u16 *gamebanner) {
 		
 	}
 	
-	//Build the final array; 3 pixel values = 3*3072 or 9216 size bmp info
 	for (y = 0; y < 3072; y++)
 	{
-		//b pixel
-		m_pImage[y * 3 + 0] = (dst[y] & 0xFF0000) >> 16;
-		//g pixel
-		m_pImage[y * 3 + 1] = (dst[y] & 0x00FF00) >>  8;
-		//r pixel
-		m_pImage[y * 3 + 2] = (dst[y] & 0x0000FF) >>  0;
+		image[y * 3 + 0] = (dst[y] & 0xFF0000) >> 16;
+		image[y * 3 + 1] = (dst[y] & 0x00FF00) >>  8;
+		image[y * 3 + 2] = (dst[y] & 0x0000FF) >>  0;
 	}
-	
-	ShowBanner(m_pImage);
-	
-	return;
 }
 
-void bannerloadCI(u8 *gamebanner, u16* lookupdata) {
+void bannerloadRGB(u16 *gamebanner)
+{
+	u8 image[CARD_BANNER_H * CARD_BANNER_W * 3];
+
+	if (!gamebanner)
+		return;
+	decode_banner_rgb(gamebanner, image);
+	ShowBanner(image);
+}
+
+void DrawBannerRGBAt(const u16 *gamebanner, int x, int y, int scale)
+{
+	u8 image[CARD_BANNER_H * CARD_BANNER_W * 3];
+
+	if (!gamebanner)
+		return;
+	decode_banner_rgb(gamebanner, image);
+	DrawBannerAt(image, x, y, scale);
+}
+
+static void decode_banner_ci(const u8 *gamebanner, const u16 *lookupdata,
+	u8 *image)
+{
 	int y, x, iy, ix;
-	u8 *src; //we need this for pointer arithmetic
+	const u8 *src;
 	u32 dst[CARD_BANNER_H*CARD_BANNER_W];
-	u8 m_pImage[CARD_BANNER_H*CARD_BANNER_W*3];
 	u8 temp;
-	
-	src = gamebanner;
 	int row = 0;
 	int count = 0;
+
+	src = gamebanner;
 	for (y = 0; y < CARD_BANNER_H; y += 4)
 	{
 		for (x = 0; x < CARD_BANNER_W; x += 8)
@@ -183,20 +196,33 @@ void bannerloadCI(u8 *gamebanner, u16* lookupdata) {
 		
 	}
 	
-	//Build the final array; 3 pixel values = 3*3072 or 9216 size bmp info
 	for (y = 0; y < CARD_BANNER_W*CARD_BANNER_H; y++)
 	{
-		//b pixel
-		m_pImage[y * 3 + 0] = (dst[y] & 0xFF0000) >> 16;
-		//g pixel
-		m_pImage[y * 3 + 1] = (dst[y] & 0x00FF00) >>  8;
-		//r pixel
-		m_pImage[y * 3 + 2] = (dst[y] & 0x0000FF) >>  0;
+		image[y * 3 + 0] = (dst[y] & 0xFF0000) >> 16;
+		image[y * 3 + 1] = (dst[y] & 0x00FF00) >>  8;
+		image[y * 3 + 2] = (dst[y] & 0x0000FF) >>  0;
 	}
-	
-	ShowBanner(m_pImage);
-	
-	return;
+}
+
+void bannerloadCI(u8 *gamebanner, u16* lookupdata)
+{
+	u8 image[CARD_BANNER_H * CARD_BANNER_W * 3];
+
+	if (!gamebanner || !lookupdata)
+		return;
+	decode_banner_ci(gamebanner, lookupdata, image);
+	ShowBanner(image);
+}
+
+void DrawBannerCIAt(const u8 *gamebanner, const u16 *lookupdata,
+	int x, int y, int scale)
+{
+	u8 image[CARD_BANNER_H * CARD_BANNER_W * 3];
+
+	if (!gamebanner || !lookupdata)
+		return;
+	decode_banner_ci(gamebanner, lookupdata, image);
+	DrawBannerAt(image, x, y, scale);
 }
 
 void iconloadRGB(u16 *gameicon) {

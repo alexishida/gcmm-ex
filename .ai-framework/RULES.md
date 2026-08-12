@@ -52,6 +52,11 @@ GameCube e Wii, código em GNU C17.
   `libogc2-libfat`, pois removeria suporte a partições e exFAT.
 - Configurar `DEVKITPRO`, `DEVKITPPC`, `PORTLIBS` e `PATH` no `.env` local.
   Instalação padrão usa `/opt/devkitpro`.
+- Neste projeto, o `.env` pode fornecer o toolchain por Docker via `RETRO_BIN`
+  e `RETRO_PLATFORM`. Quando essas variáveis existirem, executar builds com
+  `"$RETRO_BIN" "$RETRO_PLATFORM" make gc` ou
+  `"$RETRO_BIN" "$RETRO_PLATFORM" make wii`, em vez de chamar `make`
+  diretamente no host.
 - Alvos oficiais:
   - `make gc` gera `releases/gcmm_ex_GC.dol` e usa `build_GC/`.
   - `make wii` gera `releases/gcmm_ex_WII.dol` e usa `build_WII/`.
