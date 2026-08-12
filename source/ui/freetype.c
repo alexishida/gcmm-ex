@@ -226,6 +226,32 @@ void DrawText (int x, int y, char *text)
 }
 
 /**
+ * TextWidth
+ *
+ * Advance width of a string, without drawing it
+ */
+int TextWidth (const char *text)
+{
+	int width = 0;
+	int i, n;
+
+	if (text == NULL)
+		return 0;
+
+	n = strlen (text);
+
+	for (i = 0; i < n; i++)
+	{
+		if (FT_Load_Char (face, text[i], FT_LOAD_DEFAULT))
+			continue;			/*** Skip unprintable characters ***/
+
+		width += slot->advance.x >> 6;
+	}
+
+	return width;
+}
+
+/**
  * getcolour
  *
  * Simply converts RGB to Y1CbY2Cr format
@@ -347,24 +373,6 @@ void WaitButtonA ()
 	}
 #endif
 	WaitRelease();
-}
-
-/**
- * Show a prompt
- */
-void WaitPrompt (char *msg)
-{
-	//int ypos = (screenheight) >> 1;
-	//ClearScreen ();
-	//DrawText (-1, ypos, msg);
-	//ypos += 20;
-	//DrawText (-1, ypos, "Press A to continue");
-	writeStatusBar(msg,"Press A to continue");
-	ShowScreen ();
-	WaitButtonA ();
-	//clear the text
-	writeStatusBar("","");
-
 }
 
 void writeStatusBar( char *line1, char *line2)

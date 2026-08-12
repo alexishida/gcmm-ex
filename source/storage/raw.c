@@ -45,6 +45,7 @@ s32 CARD_GetSerialNo(s32 chn,u32 *serial1,u32 *serial2);
 #include "mcard.h"
 #include "gci.h"
 #include "freetype.h"
+#include "ui.h"
 #include "raw.h"
 
 #define mem_free(x) {free(x);x=NULL;}
@@ -241,14 +242,11 @@ u64 Card_SerialNo(s32 slot)
 	return serialA;
 }
 
-//output is 29 char long
+/* Sortable timestamp, 19 characters: YYYY-MM-DD_hh-mm-ss */
 static void time2name(char *name)
 {
 	int month, day, year, hour, min, sec;
 	month = day = year = hour = min = sec = 0;
-	char monthstr[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
-	                         "Aug", "Sep", "Oct", "Nov", "Dec"
-	                       };
 
 	// Taken from void SecondsToDate(int seconds, int *pYear, int *pMonth, int *pDay)
 	// Calculates year month and day since jan 1, 1970 from (t) seconds
@@ -279,7 +277,8 @@ static void time2name(char *name)
 		t /= 60;
 		hour = t % 24;
 	
-	sprintf(name, "%04d_%02d%s_%02d_%02d-%02d-%02d", year, month, monthstr[month-1], day, hour, min, sec);
+	sprintf(name, "%04d-%02d-%02d_%02d-%02d-%02d", year, month, day, hour,
+		min, sec);
 }
 
 s8 BackupRawImage(s32 slot, s32 *bytes_writen )
@@ -287,9 +286,6 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	int err;
 	int length;
 	char filename[1024];
-	char msg[128+256];
-	char msg2[128+256];
-	msg2[0] = '\0';
 	FILE* dumpFd = 0;
 	u32 SectorSize = 0;
 	u16 BlockCount = 0;	/* CARD_GetBlockCount writes a u16: an s32 here would keep the high half */
@@ -330,7 +326,6 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 		return -1;
 	}
 	s32 current_block = 0;
-	int read = 0;
 	s32 total_written = 0;
 	char name[64];
 	int filenumber = 1;
@@ -344,8 +339,8 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	mkdir(filename, S_IREAD | S_IWRITE);	
 	
 	time2name(name);
-	length = snprintf(filename, sizeof(filename), "%s:/%s/%04db_%s.raw",
-		fatpath, MCSAVES, BlockCount - 5, name);
+	length = snprintf(filename, sizeof(filename), "%s:/%s/%s_%04db.raw",
+		fatpath, MCSAVES, name, BlockCount - 5);
 	if (length < 0 || length >= (int)sizeof(filename)) {
 		mem_free(CardBuffer);
 		CARD_Unmount(slot);
@@ -353,8 +348,8 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	}
 	//not really needed because the filename has seconds in it and the same filename will "never" happen
 	while (file_exists(filename)){
-		length = snprintf(filename, sizeof(filename), "%s:/%s/%04db_%s_%02d.raw",
-			fatpath, MCSAVES, BlockCount - 5, name, filenumber);
+		length = snprintf(filename, sizeof(filename), "%s:/%s/%s_%04db_%02d.raw",
+			fatpath, MCSAVES, name, BlockCount - 5, filenumber);
 		if (length < 0 || length >= (int)sizeof(filename)) {
 			mem_free(CardBuffer);
 			CARD_Unmount(slot);
@@ -378,10 +373,6 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 	{
 		read_data = 0;//Reset read_callback
 		card_addr = SectorSize*current_block;
-		//printf("\rReading : %u bytes of %u (block %d)...",read,BlockCount*SectorSize,current_block);
-		snprintf(msg, sizeof(msg), "Reading...: Block %d of %d (%u bytes of %u)",
-			current_block, BlockCount, read, BlockCount * SectorSize);
-		writeStatusBar(msg, msg2);
 		//memset(CardBuffer, 0xFF, SectorSize);//Reset buffer. In GC memory card bytes are set to 0xFF when erasing.
 		DCInvalidateRange(CardBuffer,SectorSize);
 		if( (err != 0) || current_block >= BlockCount)
@@ -391,7 +382,6 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 		{
 			while(read_data == 0)
 				usleep(1*1000); //sleep untill the read is done
-			read = read + SectorSize;
 			current_block++;
 		}
 		else //card_read failed
@@ -419,11 +409,6 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 			if(bytes_writen != NULL)
 				*bytes_writen = total_written;
 			raw_report_progress(current_block, BlockCount);
-			//printf("\rWriting : %u bytes of %u",writen+SectorSize,read);
-			snprintf(msg2, sizeof(msg2),
-				"Writing...: Block %d of %d (%d bytes of %u)", current_block,
-				BlockCount, total_written, BlockCount * SectorSize);
-			writeStatusBar(msg, msg2);
 	}
 
 	if (fflush(dumpFd) != 0 || fclose(dumpFd) != 0) {
@@ -490,6 +475,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 	char filename[1024];
 	char msg[128+256];
 	int err;
+	int path_length;
 	u32 SectorSize = 0;
 	u16 BlockCount = 0;	/* CARD_GetBlockCount writes a u16: an s32 here would keep the high half */
 	s32 current_block = 0;
@@ -555,9 +541,9 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 
 
 	/*** Make fullpath filename ***/
-	err = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath, currFolder,
-		sdfilename);
-	if (err < 0 || err >= (int)sizeof(filename)) {
+	path_length = snprintf(filename, sizeof(filename), "%s:/%s/%s", fatpath,
+		currFolder, sdfilename);
+	if (path_length < 0 || path_length >= (int)sizeof(filename)) {
 		mem_free(CardBuffer);
 #ifdef DEBUGRAW
 		mem_free(CheckBuffer);
@@ -628,6 +614,8 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 				return -1;
 			}
 			raw_report_progress(0, BlockCount);
+			/* The loop below treats err as its failure flag. */
+			err = 0;
 			
 			s32 upblock = 0;
 			s32 write_len = SectorSize;
@@ -672,11 +660,6 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 				//printf("writing data to memory card...\n");
 				//ShowAction ("Writing data to memory card...");
 				
-				//printf("\rWriting... : %d of %d (block %d)",writen,BlockCount*SectorSize,current_block);
-				snprintf(msg, sizeof(msg),
-					"Writing...: Block %d of %d (%d of %u)", current_block,
-					BlockCount, writen, BlockCount * SectorSize);
-				ShowAction (msg);
 				//gprintf("\rWriting... : %d of %d (block %d of %d)",writen,BlockCount*SectorSize,current_block,BlockCount);
 				
 				write_data = 0;//Write callback

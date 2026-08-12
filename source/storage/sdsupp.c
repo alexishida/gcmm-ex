@@ -20,6 +20,7 @@
 
 #include "sdsupp.h"
 #include "freetype.h"
+#include "ui.h"
 #include "gci.h"
 #include "mcard.h"
 #include "raw.h"

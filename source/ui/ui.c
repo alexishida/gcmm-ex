@@ -39,7 +39,47 @@
 #define UI_WARNING     getcolour(220, 165, 53)
 #define UI_DESTRUCTIVE getcolour(186, 68, 78)
 #define UI_DISABLED    122, 139, 166
+#define UI_ACCENT_TEXT 45, 196, 196
+#define UI_WARNING_TEXT 220, 165, 53
+/* Panel-safe variants of the status colours, which are too dark as text. */
+#define UI_SUCCESS_TEXT 92, 214, 146
+#define UI_ERROR_TEXT   232, 110, 120
 #define UI_PAGE_SIZE   7
+
+/*
+ * Footer button glyphs. Both builds name the GameCube controller, because the
+ * cards being managed are GameCube cards and the footer stays identical across
+ * platforms. The Wii Remote and Classic Controller remain fully supported;
+ * UI_Help lists their equivalents.
+ */
+#define UI_BTN_OPTIONS "X"
+#define UI_BTN_MARK    "Y"
+#define UI_BTN_DEVICE  "L R"
+#define UI_BTN_HELP    "START"
+
+/* Footer layout. Bounds stay inside the overscan-safe area of an SD display. */
+#define UI_FOOTER_LEFT    42
+#define UI_FOOTER_RIGHT   598
+#define UI_FOOTER_BASE    461
+#define UI_CHIP_TOP       443
+#define UI_CHIP_BOTTOM    465
+#define UI_CHIP_PADDING   7
+#define UI_CHIP_GAP       6
+#define UI_HINT_GAP       18
+#define UI_HINT_GAP_MIN   8
+
+/* Save-details grid: two columns by three rows inside the content panel. */
+#define UI_DETAIL_FIELDS  6
+
+/* Action-menu rows. Twelve rows at these steps end at 398, inside the panel. */
+#define UI_ACTION_ROW_STEP     26
+#define UI_ACTION_HEADING_STEP 24
+
+/** A footer control: the button glyph plus the action it performs. */
+typedef struct {
+	const char *button;
+	const char *label;
+} ui_hint;
 
 typedef enum {
 	UI_KEY_NONE = 0,
@@ -263,19 +303,145 @@ static void ui_begin(const char *title, const char *subtitle)
 	setfontsize(14);
 }
 
-static void ui_footer(const char *help)
+static void ui_footer_bar(void)
 {
 	DrawBoxFilled(0, 424, vmode->fbWidth - 1, vmode->xfbHeight - 1, UI_PANEL_ALT);
 	DrawBoxFilled(0, 424, vmode->fbWidth - 1, 427, UI_ACCENT);
 	setfontsize(12);
+}
+
+static int ui_chip_width(const char *button)
+{
+	return TextWidth(button) + 2 * UI_CHIP_PADDING;
+}
+
+static int ui_draw_chip(int x, const char *button)
+{
+	int width = ui_chip_width(button);
+
+	DrawBoxFilled(x, UI_CHIP_TOP, x + width, UI_CHIP_BOTTOM, UI_SELECTED);
+	DrawBox(x, UI_CHIP_TOP, x + width, UI_CHIP_BOTTOM, UI_BORDER);
+	setfontcolour(UI_ACCENT_TEXT);
+	DrawText(x + UI_CHIP_PADDING, UI_FOOTER_BASE, (char *)button);
+	return width;
+}
+
+static int ui_hint_width(const ui_hint *hint)
+{
+	int width = ui_chip_width(hint->button);
+
+	if (hint->label && hint->label[0])
+		width += UI_CHIP_GAP + TextWidth(hint->label);
+	return width;
+}
+
+/*
+ * Draws the button hints left to right, an optional note after them, and the
+ * persistent help control right aligned. Spacing shrinks before anything is
+ * dropped, so a crowded footer stays inside the safe area instead of running
+ * under the help control.
+ */
+static void ui_footer_hints(const ui_hint *hints, int count, const char *note)
+{
+	int note_width = (note && note[0]) ? TextWidth(note) : 0;
+	int items = count + (note_width ? 1 : 0);
+	int help_x;
+	int content;
+	int gap;
+	int x;
+	int i;
+
+	ui_footer_bar();
+	if (count <= 0) {
+		if (note_width) {
+			setfontcolour(UI_MUTED);
+			DrawText(UI_FOOTER_LEFT, UI_FOOTER_BASE, (char *)note);
+		}
+		setfontsize(14);
+		return;
+	}
+
+	help_x = UI_FOOTER_RIGHT - ui_chip_width(UI_BTN_HELP) - UI_CHIP_GAP -
+		TextWidth("Help");
+	content = note_width;
+	for (i = 0; i < count; i++)
+		content += ui_hint_width(&hints[i]);
+
+	gap = UI_HINT_GAP;
+	if (items > 1) {
+		int slack = (help_x - UI_HINT_GAP - UI_FOOTER_LEFT - content) /
+			(items - 1);
+
+		if (slack < gap)
+			gap = slack > UI_HINT_GAP_MIN ? slack : UI_HINT_GAP_MIN;
+	}
+
+	x = UI_FOOTER_LEFT;
+	for (i = 0; i < count; i++) {
+		if (x + ui_hint_width(&hints[i]) > help_x)
+			break;
+		x += ui_draw_chip(x, hints[i].button);
+		if (hints[i].label && hints[i].label[0]) {
+			setfontcolour(UI_MUTED);
+			DrawText(x + UI_CHIP_GAP, UI_FOOTER_BASE, (char *)hints[i].label);
+			x += UI_CHIP_GAP + TextWidth(hints[i].label);
+		}
+		x += gap;
+	}
+	if (note_width && x + note_width <= help_x) {
+		setfontcolour(UI_MUTED);
+		DrawText(x, UI_FOOTER_BASE, (char *)note);
+	}
+
+	x = help_x + ui_draw_chip(help_x, UI_BTN_HELP);
 	setfontcolour(UI_TEXT);
-	DrawText(54, 462, (char *)help);
-	DrawBoxFilled(492, 443, 548, 465, UI_SELECTED);
-	DrawBox(492, 443, 548, 465, UI_BORDER);
-	setfontcolour(45, 196, 196);
-	DrawText(500, 461, "START");
-	setfontcolour(UI_TEXT);
-	DrawText(555, 462, "Help");
+	DrawText(x + UI_CHIP_GAP, UI_FOOTER_BASE, "Help");
+	setfontsize(14);
+}
+
+/*
+ * Draws text on up to two lines, breaking on the last space that still fits
+ * the given pixel width. Measuring beats counting characters here, because the
+ * bundled font is proportional.
+ */
+static void ui_draw_wrapped(int x, int y, int width, int line_height,
+	const char *text)
+{
+	char line[128];
+	size_t length;
+	size_t split;
+
+	if (!text || !text[0])
+		return;
+	length = strnlen(text, sizeof(line) - 1);
+	memcpy(line, text, length);
+	line[length] = '\0';
+	if (TextWidth(line) <= width) {
+		DrawText(x, y, line);
+		return;
+	}
+	for (split = length; split > 0; split--) {
+		if (text[split] != ' ')
+			continue;
+		line[split] = '\0';
+		if (TextWidth(line) <= width)
+			break;
+		line[split] = ' ';
+	}
+	if (!split) {
+		DrawText(x, y, line);	/* No break point, so let it run long. */
+		return;
+	}
+	DrawText(x, y, line);
+	DrawText(x, y + line_height, (char *)text + split + 1);
+}
+
+/* Footer for screens that take no input, so no help control is offered. */
+static void ui_footer_notice(const char *notice)
+{
+	ui_footer_bar();
+	setfontcolour(UI_WARNING_TEXT);
+	DrawText(UI_FOOTER_LEFT, UI_FOOTER_BASE, (char *)notice);
 	setfontsize(14);
 }
 
@@ -300,6 +466,29 @@ void UI_SetSavePreview(u16 banner_format, const u16 *rgb_banner,
 	ui_preview_source = source;
 }
 
+/* Framed banner at twice its native 96x32, centred in the given box. */
+static void ui_draw_banner_frame(int x, int y, int width, int height)
+{
+	/* The framebuffer packs two pixels per word, so DrawBannerAt rejects an
+	 * odd x outright. Round the centred position down to keep it drawable. */
+	int banner_x = (x + (width - 2 * CARD_BANNER_W) / 2) & ~1;
+	int banner_y = y + (height - 2 * CARD_BANNER_H) / 2;
+
+	DrawBoxFilled(x, y, x + width, y + height, UI_PANEL);
+	DrawBox(x, y, x + width, y + height, UI_BORDER);
+	if (ui_preview_format == CARD_BANNER_RGB && ui_preview_rgb) {
+		DrawBannerRGBAt(ui_preview_rgb, banner_x, banner_y, 2);
+	} else if (ui_preview_format == CARD_BANNER_CI && ui_preview_ci &&
+		ui_preview_palette) {
+		DrawBannerCIAt(ui_preview_ci, ui_preview_palette, banner_x, banner_y, 2);
+	} else {
+		setfontsize(11);
+		setfontcolour(UI_DISABLED);
+		DrawText(x + (width - TextWidth("No banner available")) / 2,
+			y + height / 2 + 4, "No banner available");
+	}
+}
+
 static void ui_draw_save_preview(void)
 {
 	char title[31];
@@ -309,19 +498,10 @@ static void ui_draw_save_preview(void)
 	setfontsize(12);
 	setfontcolour(UI_MUTED);
 	DrawText(372, 132, "Selected save");
-	DrawBoxFilled(374, 145, 577, 225, UI_PANEL);
-	DrawBox(374, 145, 577, 225, UI_BORDER);
-	if (ui_preview_format == CARD_BANNER_RGB && ui_preview_rgb) {
-		DrawBannerRGBAt(ui_preview_rgb, 380, 153, 2);
-	} else if (ui_preview_format == CARD_BANNER_CI && ui_preview_ci &&
-		ui_preview_palette) {
-		DrawBannerCIAt(ui_preview_ci, ui_preview_palette, 380, 153, 2);
-	} else {
-		setfontcolour(UI_DISABLED);
-		DrawText(414, 192, "No banner available");
-	}
+	ui_draw_banner_frame(374, 145, 203, 80);
 	snprintf(title, sizeof(title), "%.30s", ui_preview_title && ui_preview_title[0] ?
 		ui_preview_title : "Save title unavailable");
+	setfontsize(12);
 	setfontcolour(UI_TEXT);
 	DrawText(372, 257, title);
 	setfontsize(11);
@@ -347,6 +527,10 @@ int UI_MenuDisabled(const char *title, const char *subtitle,
 	const char *const items[], const bool enabled[], int item_count,
 	int initial_selection, const char *help, bool allow_back)
 {
+	static const ui_hint hints[] = {
+		{ "A", "Select" },
+		{ "B", "Back" }
+	};
 	int selected = initial_selection;
 	int first;
 	int i;
@@ -394,7 +578,7 @@ int UI_MenuDisabled(const char *title, const char *subtitle,
 			DrawText(530, 91, page);
 			setfontsize(14);
 		}
-		ui_footer(help ? help : (allow_back ? "A Select   B Back" : "A Select"));
+		ui_footer_hints(hints, allow_back ? 2 : 1, help);
 		ShowScreen();
 
 		key = ui_read_key();
@@ -419,6 +603,102 @@ int UI_MenuDisabled(const char *title, const char *subtitle,
 	}
 }
 
+/* Advances past headings and unavailable rows in the given direction. */
+static int ui_action_step(const ui_menu_item items[], int item_count, int from,
+	int step)
+{
+	int index = from;
+	int guard;
+
+	for (guard = 0; guard < item_count; guard++) {
+		index += step;
+		if (index < 0)
+			index = item_count - 1;
+		else if (index >= item_count)
+			index = 0;
+		if (items[index].enabled && !items[index].heading)
+			return index;
+	}
+	return from;
+}
+
+int UI_ActionMenu(const char *title, const char *subtitle,
+	const ui_menu_item items[], int item_count, int initial_selection,
+	const char *note)
+{
+	static const ui_hint hints[] = {
+		{ "A", "Select" },
+		{ "B", "Back" }
+	};
+	int selected = initial_selection;
+	int focusable = 0;
+	int i;
+	ui_key key;
+
+	if (!items || item_count <= 0 || item_count > UI_ACTION_MAX_ITEMS)
+		return -1;
+	for (i = 0; i < item_count; i++)
+		if (items[i].enabled && !items[i].heading)
+			focusable++;
+	if (!focusable)
+		return -1;
+	if (selected < 0 || selected >= item_count)
+		selected = 0;
+	if (!items[selected].enabled || items[selected].heading)
+		selected = ui_action_step(items, item_count, selected, 1);
+
+	ui_wait_release();
+	for (;;) {
+		int y = 120;
+
+		ui_begin(title, subtitle);
+		for (i = 0; i < item_count; i++) {
+			if (items[i].heading) {
+				setfontsize(11);
+				setfontcolour(UI_ACCENT_TEXT);
+				DrawText(58, y, (char *)items[i].label);
+				y += UI_ACTION_HEADING_STEP;
+				continue;
+			}
+			setfontsize(14);
+			if (i == selected) {
+				DrawBoxFilled(42, y - 19, 595, y + 6,
+					items[i].destructive ? UI_DESTRUCTIVE : UI_SELECTED);
+				DrawBoxFilled(42, y - 19, 47, y + 6,
+					items[i].destructive ? UI_WARNING : UI_ACCENT);
+				setfontcolour(UI_TEXT);
+				DrawText(60, y, ">");
+			} else if (!items[i].enabled) {
+				setfontcolour(UI_DISABLED);
+			} else if (items[i].destructive) {
+				setfontcolour(UI_ERROR_TEXT);
+			} else {
+				setfontcolour(UI_MUTED);
+			}
+			DrawText(82, y, (char *)items[i].label);
+			y += UI_ACTION_ROW_STEP;
+		}
+		ui_footer_hints(hints, 2, note);
+		ShowScreen();
+
+		key = ui_read_key();
+		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
+			selected = ui_action_step(items, item_count, selected, -1);
+		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
+			selected = ui_action_step(items, item_count, selected, 1);
+		} else if (key == UI_KEY_CONFIRM) {
+			ui_wait_release();
+			return selected;
+		} else if (key == UI_KEY_BACK) {
+			ui_wait_release();
+			return -1;
+		} else if (key == UI_KEY_HELP) {
+			UI_Help();
+		}
+		VIDEO_WaitVSync();
+	}
+}
+
 int UI_Menu(const char *title, const char *subtitle,
 	const char *const items[], int item_count, int initial_selection,
 	const char *help, bool allow_back)
@@ -430,6 +710,10 @@ int UI_Menu(const char *title, const char *subtitle,
 int UI_HomeMenu(const char *card_a, const char *card_b,
 	const char *storage, const char *transfer, int initial_selection)
 {
+	static const ui_hint hints[] = {
+		{ "A", "Select" },
+		{ "B", "Exit" }
+	};
 	static const char *const items[] = {
 		"Manage saves",
 		"Back up memory card",
@@ -470,7 +754,7 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 			}
 			DrawText(82, y, (char *)items[i]);
 		}
-		ui_footer("A Select   B Exit");
+		ui_footer_hints(hints, 2, NULL);
 		ShowScreen();
 
 		key = ui_read_key();
@@ -493,13 +777,23 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 
 ui_list_action UI_SaveList(const char *title, const char *subtitle,
 	u8 entries[][1024], int entry_count, int *selection, bool *marked,
-	int card_slot)
+	int card_slot, bool show_preview)
 {
+	static const ui_hint browse_hints[] = {
+		{ "A", "Select" },
+		{ "B", "Back" }
+	};
+	/* L/R swaps between both card slots, so the hint names where it leads. */
+	const char *other_card = card_slot == CARD_SLOTA ? "Card B" :
+		card_slot == CARD_SLOTB ? "Card A" : "Device";
+	/* Without the banner panel the rows own the full content width. */
+	int row_right = show_preview ? 340 : 595;
+	int name_chars = show_preview ? 48 : 72;
 	int first;
 	int i;
 	int marked_count;
-	char footer[96];
-	char label[58];
+	char mark_label[16];
+	char label[80];
 	char page[32];
 	ui_key key;
 
@@ -521,7 +815,7 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 		for (i = first; i < entry_count && i < first + UI_PAGE_SIZE; i++) {
 			int y = 118 + (i - first) * 24;
 			if (i == *selection) {
-				DrawBoxFilled(42, y - 17, 340, y + 6, UI_SELECTED);
+				DrawBoxFilled(42, y - 17, row_right, y + 6, UI_SELECTED);
 				DrawBoxFilled(42, y - 17, 47, y + 6, UI_ACCENT);
 				setfontcolour(UI_TEXT);
 			} else {
@@ -529,23 +823,40 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 			}
 			if (strnlen((char *)entries[i], sizeof(entries[i])) >= sizeof(entries[i]))
 				return UI_LIST_BACK;
-			snprintf(label, sizeof(label), "%s %.48s",
-				marked && marked[i] ? "[x]" : "[ ]", (char *)entries[i]);
+			/* Selection boxes only where marking is actually available. */
+			if (marked)
+				snprintf(label, sizeof(label), "%s %.*s",
+					marked[i] ? "[x]" : "[ ]", name_chars, (char *)entries[i]);
+			else
+				snprintf(label, sizeof(label), "%.*s", name_chars,
+					(char *)entries[i]);
 			DrawText(58, y, label);
 		}
-		ui_draw_save_preview();
+		if (show_preview)
+			ui_draw_save_preview();
 		snprintf(page, sizeof(page), "Page %d/%d", *selection / UI_PAGE_SIZE + 1,
 			(entry_count + UI_PAGE_SIZE - 1) / UI_PAGE_SIZE);
 		setfontsize(12);
 		setfontcolour(UI_MUTED);
 		DrawText(530, 91, page);
 		setfontsize(14);
-		if (marked)
-			snprintf(footer, sizeof(footer),
-				"A Open   X Options   Y Mark (%d)   B Back   L/R Device", marked_count);
-		else
-			snprintf(footer, sizeof(footer), "A Select   B Back");
-		ui_footer(footer);
+		if (marked) {
+			const ui_hint manage_hints[] = {
+				{ "A", "Open" },
+				{ UI_BTN_OPTIONS, "Options" },
+				{ UI_BTN_MARK, mark_label },
+				{ "B", "Back" },
+				{ UI_BTN_DEVICE, other_card }
+			};
+
+			if (marked_count > 0)
+				snprintf(mark_label, sizeof(mark_label), "Mark %d", marked_count);
+			else
+				snprintf(mark_label, sizeof(mark_label), "Mark");
+			ui_footer_hints(manage_hints, 5, NULL);
+		} else {
+			ui_footer_hints(browse_hints, 2, NULL);
+		}
 		ShowScreen();
 
 		key = ui_read_key();
@@ -562,7 +873,11 @@ ui_list_action UI_SaveList(const char *title, const char *subtitle,
 			ui_wait_release();
 			return UI_LIST_CONTEXT;
 		} else if (key == UI_KEY_MARK && marked) {
+			/* Marking stays in this loop, so the button must be released
+			 * before it counts again. Held state alone would toggle the
+			 * entry on every retrace of a single press. */
 			marked[*selection] = !marked[*selection];
+			ui_wait_release();
 		} else if (key == UI_KEY_PREVIOUS) {
 			ui_wait_release();
 			return UI_LIST_PREVIOUS_DEVICE;
@@ -608,6 +923,10 @@ static void ui_draw_confirmation_detail(const char *detail)
 static bool ui_confirm(const char *title, const char *message,
 	const char *detail, const char *confirm_label, bool destructive)
 {
+	static const ui_hint hints[] = {
+		{ "A", "Confirm" },
+		{ "B", "Cancel" }
+	};
 	const char *items[2] = { "Cancel", confirm_label };
 	bool previous_style = ui_destructive_confirmation;
 	int selected = 0;
@@ -638,7 +957,7 @@ static bool ui_confirm(const char *title, const char *message,
 			}
 			DrawText(82, y, (char *)items[i]);
 		}
-		ui_footer("A Confirm selection   B Cancel");
+		ui_footer_hints(hints, 2, NULL);
 		ShowScreen();
 
 		key = ui_read_key();
@@ -673,18 +992,57 @@ bool UI_ConfirmDestructive(const char *title, const char *message,
 	return ui_confirm(title, message, detail, confirm_label, true);
 }
 
-void UI_Message(const char *title, const char *message, const char *detail)
+typedef enum {
+	UI_MESSAGE_INFO = 0,
+	UI_MESSAGE_SUCCESS,
+	UI_MESSAGE_ERROR
+} ui_message_status;
+
+/*
+ * The outcome sentence is the reason this screen exists, so it leads: largest
+ * type, inside the panel, under a coloured stripe and status word that say how
+ * the operation ended before the sentence is even read. detail supports it.
+ */
+static void ui_message(const char *title, const char *message,
+	const char *detail, ui_message_status status)
 {
+	/* A message is acknowledged rather than left, so OK is the control that
+	 * gets named. B still dismisses it. */
+	static const ui_hint hints[] = {
+		{ "A", "OK" }
+	};
 	ui_key key;
 
 	ui_wait_release();
 	for (;;) {
-		ui_begin(title, message);
-		DrawBoxFilled(42, 120, 595, 230, UI_PANEL_ALT);
-		setfontsize(14);
+		ui_begin(title, NULL);
+		DrawBoxFilled(42, 132, 595, 288, UI_PANEL_ALT);
+		DrawBox(42, 132, 595, 288, UI_BORDER);
+		DrawBoxFilled(42, 132, 48, 288,
+			status == UI_MESSAGE_SUCCESS ? UI_SUCCESS :
+			status == UI_MESSAGE_ERROR ? UI_DESTRUCTIVE : UI_ACCENT);
+
+		setfontsize(11);
+		if (status == UI_MESSAGE_SUCCESS)
+			setfontcolour(UI_SUCCESS_TEXT);
+		else if (status == UI_MESSAGE_ERROR)
+			setfontcolour(UI_ERROR_TEXT);
+		else
+			setfontcolour(UI_ACCENT_TEXT);
+		DrawText(66, 160, status == UI_MESSAGE_SUCCESS ? "SUCCESS" :
+			status == UI_MESSAGE_ERROR ? "FAILED" : "NOTICE");
+
+		setfontsize(18);
 		setfontcolour(UI_TEXT);
-		DrawText(58, 158, (char *)(detail && detail[0] ? detail : "Operation finished."));
-		ui_footer("A OK   B Back");
+		ui_draw_wrapped(66, 194, 513, 26,
+			message && message[0] ? message : "Operation finished.");
+
+		if (detail && detail[0]) {
+			setfontsize(12);
+			setfontcolour(UI_MUTED);
+			ui_draw_wrapped(66, 250, 513, 18, detail);
+		}
+		ui_footer_hints(hints, 1, NULL);
 		ShowScreen();
 		key = ui_read_key();
 		if (key == UI_KEY_CONFIRM || key == UI_KEY_BACK) {
@@ -695,24 +1053,92 @@ void UI_Message(const char *title, const char *message, const char *detail)
 	}
 }
 
-void UI_Details(const char *title, const char *const lines[], int line_count)
+void UI_Message(const char *title, const char *message, const char *detail)
 {
+	ui_message(title, message, detail, UI_MESSAGE_INFO);
+}
+
+void UI_MessageSuccess(const char *title, const char *message, const char *detail)
+{
+	ui_message(title, message, detail, UI_MESSAGE_SUCCESS);
+}
+
+void UI_MessageError(const char *title, const char *message, const char *detail)
+{
+	ui_message(title, message, detail, UI_MESSAGE_ERROR);
+}
+
+/*
+ * Storage modules raise failures from inside long operations. These used to
+ * print two lines into a grey strip over whatever screen was up, which read as
+ * nothing having happened at all. They get the same screen as every other
+ * failure now.
+ */
+void WaitPrompt(char *msg)
+{
+	ui_message("Operation stopped", msg && msg[0] ? msg : "The operation failed.",
+		"No further step was attempted.", UI_MESSAGE_ERROR);
+}
+
+void UI_SaveDetails(const char *subtitle, const char *title,
+	const char *description, const char *filename,
+	const ui_field fields[], int field_count)
+{
+	/* One way out is enough on a read-only screen. A still dismisses it, so a
+	 * reflexive press after opening with A does not leave the user stuck. */
+	static const ui_hint hints[] = {
+		{ "B", "Back" }
+	};
+	char text[64];
 	ui_key key;
 	int i;
 
+	if (field_count < 0)
+		field_count = 0;
+	if (field_count > UI_DETAIL_FIELDS)
+		field_count = UI_DETAIL_FIELDS;
+
 	ui_wait_release();
 	for (;;) {
-		ui_begin(title, "Save details");
-		DrawBoxFilled(42, 112, 595, 350, UI_PANEL_ALT);
-		setfontsize(14);
-		for (i = 0; i < line_count && i < 8; i++) {
-			if (i == 0)
-				setfontcolour(UI_TEXT);
-			else
-				setfontcolour(UI_MUTED);
-			DrawText(58, 143 + i * 27, (char *)lines[i]);
+		ui_begin("Save details", subtitle);
+		DrawBoxFilled(42, 112, 595, 404, UI_PANEL_ALT);
+		DrawBox(42, 112, 595, 404, UI_BORDER);
+
+		/* Identity block: banner on the left, names beside it. */
+		ui_draw_banner_frame(58, 128, 204, 80);
+		setfontsize(16);
+		setfontcolour(UI_TEXT);
+		snprintf(text, sizeof(text), "%.32s", title && title[0] ? title : "Untitled save");
+		DrawText(282, 154, text);
+		setfontsize(12);
+		setfontcolour(UI_MUTED);
+		if (description && description[0]) {
+			snprintf(text, sizeof(text), "%.40s", description);
+			DrawText(282, 178, text);
 		}
-		ui_footer("A Close   B Back");
+		setfontsize(11);
+		setfontcolour(UI_DISABLED);
+		snprintf(text, sizeof(text), "%.48s",
+			filename && filename[0] ? filename : "Internal filename unavailable");
+		DrawText(282, 200, text);
+		DrawHLine(58, 579, 228, UI_BORDER);
+
+		/* Metadata grid, filled left to right then top to bottom. */
+		for (i = 0; i < field_count; i++) {
+			int x = (i % 2) ? 325 : 58;
+			int y = 254 + (i / 2) * 52;
+
+			setfontsize(11);
+			setfontcolour(UI_ACCENT_TEXT);
+			DrawText(x, y, (char *)fields[i].label);
+			setfontsize(14);
+			setfontcolour(UI_TEXT);
+			snprintf(text, sizeof(text), "%.40s",
+				fields[i].value && fields[i].value[0] ? fields[i].value : "Unavailable");
+			DrawText(x, y + 22, text);
+		}
+		ui_footer_hints(hints, 1,
+			"Backup and delete actions are under X in the save list.");
 		ShowScreen();
 		key = ui_read_key();
 		if (key == UI_KEY_CONFIRM || key == UI_KEY_BACK) {
@@ -734,6 +1160,9 @@ void UI_About(const char *author, const char *foundation)
 		"Both memory-card slots",
 		"Banners and animated icons",
 		"SD, SD Gecko, SD2SP2, USB, GC Loader"
+	};
+	static const ui_hint hints[] = {
+		{ "B", "Back" }
 	};
 	ui_key key;
 	int i;
@@ -774,7 +1203,7 @@ void UI_About(const char *author, const char *foundation)
 		setfontcolour(UI_MUTED);
 		DrawText(58, 330, "MIT License");
 		setfontsize(14);
-		ui_footer("A Close   B Back");
+		ui_footer_hints(hints, 1, NULL);
 		ShowScreen();
 		key = ui_read_key();
 		if (key == UI_KEY_CONFIRM || key == UI_KEY_BACK) {
@@ -803,26 +1232,46 @@ void UI_Progress(const char *title, const char *item, int current, int total)
 		current = 0;
 	if (current > total)
 		current = total;
-	filled = 480 * current / total;
+	/* Inner span only, so a full bar stops short of its own border. */
+	filled = 478 * current / total;
 
 	ui_begin(title, item);
-	setfontsize(12);
-	setfontcolour(UI_MUTED);
-	DrawText(58, 124, (char *)ui_transfer_source);
-	DrawText(58, 150, (char *)ui_transfer_destination);
-	DrawBoxFilled(78, 188, 560, 224, UI_PANEL_ALT);
-	DrawBox(78, 188, 560, 224, UI_BORDER);
-	if (determinate && filled > 0)
-		DrawBoxFilled(80, 190, 80 + filled, 222, UI_ACCENT);
-	if (determinate)
-		snprintf(progress, sizeof(progress), "%d of %d   %d%%", current, total,
-			100 * current / total);
-	else
-		snprintf(progress, sizeof(progress), "Working...");
+
+	/* Where the data is going, on the same grid the details screen uses. */
+	DrawBoxFilled(42, 112, 595, 190, UI_PANEL_ALT);
+	DrawBox(42, 112, 595, 190, UI_BORDER);
+	setfontsize(11);
+	setfontcolour(UI_ACCENT_TEXT);
+	DrawText(58, 136, "SOURCE");
+	DrawText(325, 136, "DESTINATION");
 	setfontsize(14);
 	setfontcolour(UI_TEXT);
-	DrawText(-1, 260, progress);
-	ui_footer("Do not remove the memory card or storage device.");
+	snprintf(progress, sizeof(progress), "%.30s", ui_transfer_source);
+	DrawText(58, 166, progress);
+	snprintf(progress, sizeof(progress), "%.30s", ui_transfer_destination);
+	DrawText(325, 166, progress);
+
+	/* The share completed leads, because it is what the user waits on. */
+	if (determinate)
+		snprintf(progress, sizeof(progress), "%d%%", 100 * current / total);
+	else
+		snprintf(progress, sizeof(progress), "Working...");
+	setfontsize(30);
+	setfontcolour(UI_TEXT);
+	DrawText(-1, 258, progress);
+
+	DrawBoxFilled(78, 282, 560, 312, UI_PANEL_ALT);
+	DrawBox(78, 282, 560, 312, UI_BORDER);
+	if (determinate && filled > 0)
+		DrawBoxFilled(80, 284, 80 + filled, 310, UI_ACCENT);
+
+	setfontsize(12);
+	setfontcolour(UI_MUTED);
+	if (determinate) {
+		snprintf(progress, sizeof(progress), "%d of %d", current, total);
+		DrawText(-1, 336, progress);
+	}
+	ui_footer_notice("Do not remove the memory card or storage device.");
 	ShowScreen();
 }
 
@@ -836,6 +1285,10 @@ bool UI_CancelRequested(void)
 
 void UI_Help(void)
 {
+	static const ui_hint hints[] = {
+		{ "B", "Close" }
+	};
+
 	ui_wait_release();
 	ui_begin("Controls", "Same controls throughout GCMM-EX");
 	setfontsize(14);
@@ -843,16 +1296,21 @@ void UI_Help(void)
 	DrawText(58, 130, "D-pad / Analog    Navigate");
 	DrawText(58, 160, "A                 Select / confirm");
 	DrawText(58, 190, "B                 Back / cancel");
-#ifdef HW_RVL
-	DrawText(58, 220, "+ / -             Options / mark");
-	DrawText(58, 250, "1 / 2             Previous / next device");
-	DrawText(58, 280, "HOME              Help");
-#else
 	DrawText(58, 220, "X / Y             Options / mark");
 	DrawText(58, 250, "L / R             Previous / next device");
 	DrawText(58, 280, "START             Help");
+#ifdef HW_RVL
+	DrawHLine(58, 579, 306, UI_BORDER);
+	setfontsize(12);
+	setfontcolour(UI_ACCENT_TEXT);
+	DrawText(58, 330, "WII REMOTE AND CLASSIC CONTROLLER");
+	setfontcolour(UI_MUTED);
+	DrawText(58, 354, "+ / -             Options / mark");
+	DrawText(58, 376, "1 / 2             Previous / next device");
+	DrawText(58, 398, "HOME              Help");
+	setfontsize(14);
 #endif
-	ui_footer("A Close   B Close");
+	ui_footer_hints(hints, 1, NULL);
 	ShowScreen();
 	for (;;) {
 		ui_key key = ui_read_key();

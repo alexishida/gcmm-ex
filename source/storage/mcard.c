@@ -52,6 +52,7 @@ s32 CARD_GetSerialNo(s32 chn,u32 *serial1,u32 *serial2);
 #include "mcard.h"
 #include "gci.h"
 #include "freetype.h"
+#include "ui.h"
 
 /*** Memory Card Work Area ***/
 static u8 SysArea[CARD_WORKAREA] ATTRIBUTE_ALIGN (32);

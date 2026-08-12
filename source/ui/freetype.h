@@ -28,14 +28,14 @@ void setfontsize(int pixelsize);
 void setfontcolour(u8 r, u8 g, u8 b);
 /** Draw a NUL-terminated string; x == -1 centers it horizontally. */
 void DrawText(int x, int y, char *text);
+/** Measure a NUL-terminated string in pixels at the current font size. */
+int TextWidth(const char *text);
 /** Convert an RGB triplet to the framebuffer color representation. */
 unsigned int getcolour(u8 r1, u8 g1, u8 b1);
 /** Present next framebuffer and wait for vertical retrace. */
 void ShowScreen(void);
 /** Display a non-blocking status message. */
 void ShowAction(char *msg);
-/** Display a message and wait until user confirms it. */
-void WaitPrompt(char *msg);
 /** Draw two status lines in bottom screen area. */
 void writeStatusBar(char *line1, char *line2);
 

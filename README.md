@@ -181,11 +181,28 @@ scripts/run-dolphin.sh --wii
 
 Set `DOLPHIN` in `.env` when the executable is not on `PATH`. Windows Dolphin
 paths work under WSL. The launcher configures an isolated test profile: Slot A
-uses the GCI files in `memorycards/`, and Slot B uses its RAW image. Both are
-copied on first use to Dolphin's USA-region test-card paths under
-`tests/dolphin/user/GC/GCMM-EX/`, so test writes do not alter the source files.
-Run `scripts/run-dolphin.sh --setup` to prepare only the profile. Configure
-controllers before testing; see
+is disabled, and Slot B uses the RAW image `memorycards/backup.USA.raw`. It is
+copied on first use to Dolphin's USA-region test-card path under
+`tests/dolphin/user/GC/GCMM-EX/`, so test writes do not alter the source file.
+Run `scripts/run-dolphin.sh --setup` to prepare only the profile.
+
+### Reloading the emulated card
+
+Ordinary runs keep whatever the emulated card already holds, so a test that
+wrote to the card carries its result into the next run. Reload the card when
+the next test needs a known starting point:
+
+```sh
+scripts/run-dolphin.sh --reset-card         # reload backup.USA.raw, then exit
+scripts/run-dolphin.sh --gc --reset-card    # reload it, then launch
+scripts/run-dolphin.sh --import other.raw   # load a different image instead
+```
+
+Both flags overwrite the emulated card and discard its current contents; the
+source file is never modified. The image must be a whole number of 8 KiB
+blocks, or the launcher reports the size and stops before copying anything.
+
+Configure controllers before testing; see
 [tests/dolphin/README.md](tests/dolphin/README.md) for the checklist and
 emulator limitations.
 

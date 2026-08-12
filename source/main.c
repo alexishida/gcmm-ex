@@ -503,7 +503,7 @@ int device_select()
 	int i;
 
 	if (!DEVICES[DEV_NUM]) {
-		UI_Message("Storage device", "No supported storage detected.",
+		UI_MessageError("Storage device", "No supported storage detected.",
 			"Connect SD or USB storage and try again.");
 		return 0;
 	}
@@ -522,7 +522,7 @@ int device_select()
 	}
 	skip_selector = 0;
 	selected = UI_Menu("Storage device", "Choose the storage GCMM-EX should use",
-		items, item_count, 0, "A Select   B Back", true);
+		items, item_count, 0, NULL, true);
 	return selected >= 0 && selected < item_count ? item_devices[selected] : 0;
 }
 
@@ -590,7 +590,9 @@ static int select_memory_card(void)
 	bool enabled[2];
 	bool detected;
 	int count = 0;
+	int detected_count = 0;
 	int choice;
+	int i;
 
 	if (!card_slot_is_reserved(CARD_SLOTA)) {
 		detected = probe_memory_card(CARD_SLOTA);
@@ -609,18 +611,25 @@ static int select_memory_card(void)
 		slots[count++] = CARD_SLOTB;
 	}
 	if (!count) {
-		UI_Message("Memory card", "No accessible memory-card slots.",
+		UI_MessageError("Memory card", "No accessible memory-card slots.",
 			"Active SD Gecko occupies both available card slots.");
 		return -1;
 	}
 
-	choice = UI_MenuDisabled("Memory card", "Choose source or destination card", items,
-		enabled, count, 0, "Unavailable cards cannot be selected. B Back", true);
-	if (choice < 0) {
-		UI_Message("Memory card", "No detected memory cards are available.",
+	/* Report the empty case before opening the menu. Afterwards -1 cannot be
+	 * told apart from the user simply pressing B, and going back is not an
+	 * error. */
+	for (i = 0; i < count; i++)
+		if (enabled[i])
+			detected_count++;
+	if (!detected_count) {
+		UI_MessageError("Memory card", "No detected memory cards are available.",
 			"Insert a card or choose a different storage device.");
 		return -1;
 	}
+
+	choice = UI_MenuDisabled("Memory card", "Choose source or destination card", items,
+		enabled, count, 0, "Unavailable cards cannot be selected.", true);
 	return choice >= 0 && choice < count ? slots[choice] : -1;
 }
 
@@ -634,7 +643,7 @@ static int select_other_memory_card(int source_slot)
 		return -1;
 	destination_slot = source_slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
 	if (card_slot_is_reserved(destination_slot) || !probe_memory_card(destination_slot)) {
-		UI_Message("Copy save", "No accessible destination memory card is detected.",
+		UI_MessageError("Copy save", "No accessible destination memory card is detected.",
 			"Insert the other card or choose a different storage device.");
 		return -1;
 	}
@@ -642,7 +651,7 @@ static int select_other_memory_card(int source_slot)
 		destination_slot == CARD_SLOTA ? 'A' : 'B');
 	items[0] = label;
 	return UI_Menu("Copy destination", "Choose destination memory card", items, 1,
-		0, "A Select   B Back", true) == 0 ? destination_slot : -1;
+		0, NULL, true) == 0 ? destination_slot : -1;
 }
 
 static bool require_storage(void)
@@ -665,7 +674,7 @@ static bool require_storage(void)
 		if (have_sd)
 			return true;
 
-		UI_Message("Storage device", "Could not mount selected device.",
+		UI_MessageError("Storage device", "Could not mount selected device.",
 			"Check the device and choose another one, or press B to cancel.");
 		detect_devices();
 	}
@@ -718,7 +727,7 @@ static void run_full_backup(void)
 	MEM_CARD = slot;
 	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
 	if (!probe_memory_card(slot)) {
-		UI_Message("Back up memory card", "Selected memory card is not detected.",
+		UI_MessageError("Back up memory card", "Selected memory card is not detected.",
 			"Insert card and try again.");
 		return;
 	}
@@ -776,11 +785,11 @@ static void run_full_backup(void)
 	if (canceled)
 		UI_Message("Backup canceled", "No file write was interrupted.", result);
 	else if (failed && completed)
-		UI_Message("Backup partial", "Some saves could not be backed up.", result);
+		UI_MessageError("Backup partial", "Some saves could not be backed up.", result);
 	else if (failed)
-		UI_Message("Backup failed", "No saves were backed up.", result);
+		UI_MessageError("Backup failed", "No saves were backed up.", result);
 	else
-		UI_Message("Backup complete", "Backup completed successfully.", result);
+		UI_MessageSuccess("Backup complete", "Backup completed successfully.", result);
 }
 
 static bool storage_entry_is_folder(const char *name)
@@ -857,7 +866,7 @@ static void restore_backup_file(const char *filename)
 	char detail[80];
 
 	if (!storage_entry_name_is_valid(filename) || !SDLoadMCImageHeader((char *)filename)) {
-		UI_Message("Restore backup", "Backup file is invalid or unreadable.",
+		UI_MessageError("Restore backup", "Backup file is invalid or unreadable.",
 			"Only complete GCI, GCS, and SAV files can be restored.");
 		return;
 	}
@@ -869,7 +878,7 @@ static void restore_backup_file(const char *filename)
 	MEM_CARD = slot;
 	set_workflow_state(device_name(CUR_DEVICE), memory_card_name(slot));
 	if (!probe_memory_card(slot)) {
-		UI_Message("Restore backup", "Selected memory card is not detected.",
+		UI_MessageError("Restore backup", "Selected memory card is not detected.",
 			"Insert card and try again.");
 		return;
 	}
@@ -881,22 +890,22 @@ static void restore_backup_file(const char *filename)
 		return;
 	UI_Progress("Restoring backup", filename, 0, 1);
 	if (!probe_memory_card(slot)) {
-		UI_Message("Restore backup", "Destination memory card was removed.",
+		UI_MessageError("Restore backup", "Destination memory card was removed.",
 			"Reinsert the card and start the restore again.");
 		return;
 	}
 	if (!SDLoadMCImage((char *)filename)) {
-		UI_Message("Restore backup", "Could not read the complete backup file.",
+		UI_MessageError("Restore backup", "Could not read the complete backup file.",
 			"Check the storage device and backup file.");
 		return;
 	}
 	if (!write_save_file(slot)) {
-		UI_Message("Restore backup", "Could not write the destination memory card.",
+		UI_MessageError("Restore backup", "Could not write the destination memory card.",
 			"Check available blocks, overwrite prompts, and card connection.");
 		return;
 	}
 	UI_Progress("Restoring backup", filename, 1, 1);
-	UI_Message("Restore complete", "Backup restored successfully.",
+	UI_MessageSuccess("Restore complete", "Backup restored successfully.",
 		"Do not remove either device until this message is shown.");
 }
 
@@ -944,7 +953,7 @@ static void run_restore_backup(void)
 			(char *)currFolder);
 		update_restore_preview(selected, count, preview_title);
 		action = UI_SaveList("Restore backup", subtitle, filelist, count,
-			&selected, NULL, -1);
+			&selected, NULL, -1, true);
 		if (action == UI_LIST_BACK) {
 			if (!leave_backup_folder())
 				return;
@@ -959,7 +968,7 @@ static void run_restore_backup(void)
 			continue;
 		if (storage_entry_is_folder((char *)filelist[selected])) {
 			if (!enter_backup_folder((char *)filelist[selected]))
-				UI_Message("Restore backup", "Folder path is too long.",
+				UI_MessageError("Restore backup", "Folder path is too long.",
 					"Choose a folder with a shorter path.");
 			selected = 0;
 			continue;
@@ -988,6 +997,20 @@ static void clean_detail_text(char *out, size_t out_size, const u8 *in, size_t i
 	out[used] = '\0';
 }
 
+/* Card images run to megabytes, so a raw byte count reads as noise. */
+static void format_transfer_size(s32 bytes, char *out, size_t out_size)
+{
+	if (bytes < 0)
+		bytes = 0;
+	if (bytes >= 1024 * 1024)
+		snprintf(out, out_size, "%d.%d MB", bytes / (1024 * 1024),
+			(bytes % (1024 * 1024)) / (1024 * 105));
+	else if (bytes >= 1024)
+		snprintf(out, out_size, "%d KB", bytes / 1024);
+	else
+		snprintf(out, out_size, "%d bytes", bytes);
+}
+
 static void format_save_datetime(u32 timestamp, char *out, size_t out_size)
 {
 	static const char *const months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -1011,55 +1034,89 @@ static void format_save_datetime(u32 timestamp, char *out, size_t out_size)
 	month = j + 2 - 12 * l;
 	year = 100 * (n - 49) + i + l;
 	if (month < 1 || month > 12) {
-		snprintf(out, out_size, "Modified: unavailable");
+		snprintf(out, out_size, "Unavailable");
 		return;
 	}
-	snprintf(out, out_size, "Modified: %s %02llu, %04llu %02llu:%02llu:%02llu",
+	snprintf(out, out_size, "%s %02llu, %04llu  %02llu:%02llu:%02llu",
 		months[month - 1], day, year, (seconds / 3600) % 24,
 		(seconds / 60) % 60, seconds % 60);
 }
 
+/* Loads the banner for one card save. title backs the stored preview text and
+ * must outlive every screen drawn while the preview stays set. */
+static void update_save_preview(int slot, int selected, char title[65])
+{
+	card_direntry preview_entry;
+	char preview_comments[65];
+
+	if (MCardLoadSavePreview(slot, selected, &preview_entry, preview_comments)) {
+		clean_detail_text(title, 65, (const u8 *)preview_comments,
+			sizeof(preview_comments) - 1);
+		UI_SetSavePreview(preview_entry.banner_fmt, bannerdata, bannerdataCI,
+			tlutbanner, title, "Banner from memory card");
+	} else {
+		title[0] = '\0';
+		UI_ClearSavePreview();
+	}
+}
+
 static void show_save_details(int slot, int selected)
 {
-	const char *lines[7];
+	ui_field fields[6];
 	card_direntry entry;
 	char comments[65];
+	char title[33];
+	char description[33];
 	char internal_name[CARD_FILENAMELEN + 1];
 	char gamecode[5];
 	char company[3];
-	char metadata[64];
+	char blocks[16];
+	char copies[16];
 	char date[64];
-	char permissions[64];
-	char source[32];
+	char permissions[48];
+	char subtitle[32];
+	char preview_title[65];
 
 	if (!card_save_entry_is_valid(selected) ||
 		!MCardGetSaveDetails(slot, selected, &entry, comments))
 		return;
+	/* The comment block holds two fixed 32-byte fields: title, then note. */
+	clean_detail_text(title, sizeof(title), (const u8 *)comments, 32);
+	clean_detail_text(description, sizeof(description), (const u8 *)comments + 32, 32);
 	clean_detail_text(internal_name, sizeof(internal_name), entry.filename,
 		sizeof(entry.filename));
-	clean_detail_text(comments, sizeof(comments), (u8 *)comments, 64);
 	memcpy(gamecode, entry.gamecode, 4);
 	gamecode[4] = '\0';
 	memcpy(company, entry.company, 2);
 	company[2] = '\0';
 	format_save_datetime(entry.last_modified, date, sizeof(date));
-	snprintf(metadata, sizeof(metadata), "Game: %s   Company: %s   Blocks: %u", gamecode,
-		company, entry.length);
-	snprintf(permissions, sizeof(permissions), "Permissions: %s%s%s   Copies: %u",
-		(entry.permission & 16) ? "" : "No move ",
-		(entry.permission & 8) ? "" : "No copy ",
-		(entry.permission & 4) ? "Public" : "Private", entry.copy_times);
-
-	snprintf(source, sizeof(source), "Source: Memory Card %c",
+	snprintf(blocks, sizeof(blocks), "%u", entry.length);
+	snprintf(copies, sizeof(copies), "%u", entry.copy_times);
+	snprintf(permissions, sizeof(permissions), "%s%s%s",
+		(entry.permission & 16) ? "" : "No move / ",
+		(entry.permission & 8) ? "" : "No copy / ",
+		(entry.permission & 4) ? "Public" : "Private");
+	snprintf(subtitle, sizeof(subtitle), "Memory Card %c",
 		slot == CARD_SLOTA ? 'A' : 'B');
-	lines[0] = comments[0] ? comments : (char *)filelist[selected];
-	lines[1] = internal_name[0] ? internal_name : "Internal filename unavailable";
-	lines[2] = metadata;
-	lines[3] = date;
-	lines[4] = permissions;
-	lines[5] = source;
-	lines[6] = "Use X for backup and delete actions.";
-	UI_Details("Save details", lines, 7);
+
+	fields[0].label = "GAME CODE";
+	fields[0].value = gamecode;
+	fields[1].label = "COMPANY";
+	fields[1].value = company;
+	fields[2].label = "BLOCKS";
+	fields[2].value = blocks;
+	fields[3].label = "COPIES";
+	fields[3].value = copies;
+	fields[4].label = "MODIFIED";
+	fields[4].value = date;
+	fields[5].label = "PERMISSIONS";
+	fields[5].value = permissions;
+
+	update_save_preview(slot, selected, preview_title);
+	UI_SaveDetails(subtitle, title[0] ? title : (char *)filelist[selected],
+		description, internal_name, fields, 6);
+	/* preview_title dies with this frame, so drop the stored pointer too. */
+	UI_ClearSavePreview();
 }
 
 static int marked_save_count(const bool *marked, int count)
@@ -1108,7 +1165,7 @@ static bool backup_one_save(int slot, int id)
 		return false;
 	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
 	if (!MCardGetSaveDetails(slot, id, &entry, comments)) {
-		UI_Message("Back up save", "Could not read selected save details.",
+		UI_MessageError("Back up save", "Could not read selected save details.",
 			"No backup was created.");
 		return false;
 	}
@@ -1120,12 +1177,12 @@ static bool backup_one_save(int slot, int id)
 		return false;
 	UI_Progress("Backing up save", (char *)filelist[id], 0, 1);
 	if (!probe_memory_card(slot) || !CardReadFile(slot, id) || !SDSaveMCImage()) {
-		UI_Message("Back up save", "Backup failed.",
+		UI_MessageError("Back up save", "Backup failed.",
 			"Check memory card, storage space, and filesystem.");
 		return false;
 	}
 	UI_Progress("Backing up save", (char *)filelist[id], 1, 1);
-	UI_Message("Back up save", "Backup completed successfully.",
+	UI_MessageSuccess("Back up save", "Backup completed successfully.",
 		"GCI size verified on storage.");
 	return true;
 }
@@ -1145,7 +1202,7 @@ static bool copy_save_to_card(int source_slot, int id)
 	if (destination_slot < 0)
 		return false;
 	if (!probe_memory_card(destination_slot)) {
-		UI_Message("Copy save", "Destination memory card is not detected.",
+		UI_MessageError("Copy save", "Destination memory card is not detected.",
 			"Insert destination card and try again.");
 		return false;
 	}
@@ -1167,7 +1224,7 @@ static bool copy_save_to_card(int source_slot, int id)
 	if (!probe_memory_card(destination_slot) || !MCardVerifyLastWrite(destination_slot))
 		return false;
 	UI_Progress("Copying save", (char *)filelist[id], 3, 3);
-	UI_Message("Copy complete", "Save copied successfully.",
+	UI_MessageSuccess("Copy complete", "Save copied successfully.",
 		"Source save was not modified.");
 	return true;
 }
@@ -1191,7 +1248,7 @@ static void copy_marked_saves(int source_slot, const bool *marked, int count)
 	if (!selected_count || !probe_memory_card(source_slot))
 		return;
 	if (!selected_save_blocks(source_slot, marked, count, &total_blocks)) {
-		UI_Message("Copy selected saves", "Could not read selected save metadata.",
+		UI_MessageError("Copy selected saves", "Could not read selected save metadata.",
 			"No saves were copied.");
 		return;
 	}
@@ -1236,11 +1293,11 @@ static void copy_marked_saves(int source_slot, const bool *marked, int count)
 	if (skipped)
 		UI_Message("Selected copy stopped", "Remaining selected saves were skipped.", result);
 	else if (failed && completed)
-		UI_Message("Selected copy partial", "Some selected saves could not be copied.", result);
+		UI_MessageError("Selected copy partial", "Some selected saves could not be copied.", result);
 	else if (failed)
-		UI_Message("Selected copy failed", "No selected saves were copied.", result);
+		UI_MessageError("Selected copy failed", "No selected saves were copied.", result);
 	else
-		UI_Message("Selected copy complete", "All selected saves were copied.", result);
+		UI_MessageSuccess("Selected copy complete", "All selected saves were copied.", result);
 }
 
 static void backup_marked_saves(int slot, const bool *marked, int count)
@@ -1262,7 +1319,7 @@ static void backup_marked_saves(int slot, const bool *marked, int count)
 		return;
 	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
 	if (!selected_save_blocks(slot, marked, count, &total_blocks)) {
-		UI_Message("Selected backup", "Could not read selected save metadata.",
+		UI_MessageError("Selected backup", "Could not read selected save metadata.",
 			"No backup was created.");
 		return;
 	}
@@ -1301,11 +1358,11 @@ static void backup_marked_saves(int slot, const bool *marked, int count)
 	if (skipped)
 		UI_Message("Selected backup stopped", "Remaining selected saves were skipped.", result);
 	else if (failed && completed)
-		UI_Message("Selected backup partial", "Some saves could not be backed up.", result);
+		UI_MessageError("Selected backup partial", "Some saves could not be backed up.", result);
 	else if (failed)
-		UI_Message("Selected backup failed", "No selected saves were backed up.", result);
+		UI_MessageError("Selected backup failed", "No selected saves were backed up.", result);
 	else
-		UI_Message("Selected backup complete", "All selected saves were backed up.", result);
+		UI_MessageSuccess("Selected backup complete", "All selected saves were backed up.", result);
 }
 
 static void move_save_to_card(int source_slot, int id)
@@ -1320,16 +1377,16 @@ static void move_save_to_card(int source_slot, int id)
 		"Source is deleted only after the destination copy succeeds.", "Start move"))
 		return;
 	if (!copy_save_to_card(source_slot, id)) {
-		UI_Message("Move save", "Move stopped before source deletion.",
+		UI_MessageError("Move save", "Move stopped before source deletion.",
 			"Source save remains unchanged.");
 		return;
 	}
 	if (!probe_memory_card(source_slot) || !MCardDeleteFile(source_slot, id)) {
-		UI_Message("Move partial", "Copy succeeded, but source deletion failed.",
+		UI_MessageError("Move partial", "Copy succeeded, but source deletion failed.",
 			"Both copies may now exist. Verify cards before retrying.");
 		return;
 	}
-	UI_Message("Move complete", "Save copied and source deleted.", NULL);
+	UI_MessageSuccess("Move complete", "Save copied and source deleted.", NULL);
 }
 
 static int delete_marked_saves(int slot, bool *marked, int count)
@@ -1350,12 +1407,12 @@ static int delete_marked_saves(int slot, bool *marked, int count)
 	if (!marked || count < 0 || count > CARD_MAXFILES || !selected_count)
 		return 0;
 	if (!probe_memory_card(slot)) {
-		UI_Message("Delete selected saves", "Selected memory card is not detected.",
+		UI_MessageError("Delete selected saves", "Selected memory card is not detected.",
 			"Insert card and try again.");
 		return -1;
 	}
 	if (!selected_save_blocks(slot, marked, count, &total_blocks)) {
-		UI_Message("Delete selected saves", "Could not read selected save metadata.",
+		UI_MessageError("Delete selected saves", "Could not read selected save metadata.",
 			"No data was deleted.");
 		return -1;
 	}
@@ -1393,21 +1450,58 @@ static int delete_marked_saves(int slot, bool *marked, int count)
 	UI_Progress("Deleting selected saves", "Finalizing deletion", selected_count, selected_count);
 	snprintf(result, sizeof(result), "%d deleted, %d failed, %d skipped.", deleted,
 		failed, skipped);
-	if (skipped)
+	if (failed)
+		UI_MessageError("Delete selected saves",
+			"Some selected saves could not be deleted.", result);
+	else if (skipped)
 		UI_Message("Delete selected saves", "Batch delete stopped.", result);
 	else
-		UI_Message("Delete selected saves", "Batch delete finished.", result);
+		UI_MessageSuccess("Delete selected saves",
+			"All selected saves were deleted.", result);
 	return 1;
+}
+
+static int add_action(ui_menu_item items[], int count, const char *label,
+	bool enabled, bool destructive)
+{
+	items[count].label = label;
+	items[count].enabled = enabled;
+	items[count].destructive = destructive;
+	items[count].heading = false;
+	return count + 1;
+}
+
+static int add_action_heading(ui_menu_item items[], int count, const char *label)
+{
+	items[count].label = label;
+	items[count].enabled = false;
+	items[count].destructive = false;
+	items[count].heading = true;
+	return count + 1;
 }
 
 static void run_manage_saves(void)
 {
-	const char *actions[9];
+	ui_menu_item actions[UI_ACTION_MAX_ITEMS];
 	static const char *const sources[] = {
 		"Memory card",
 		"Mounted storage backups"
 	};
-	bool action_enabled[9];
+	char marked_heading[32];
+	char marked_copy[32];
+	char marked_backup[32];
+	char marked_delete[32];
+	int at_details;
+	int at_copy;
+	int at_move;
+	int at_backup;
+	int at_delete;
+	int at_marked_copy;
+	int at_marked_backup;
+	int at_marked_clear;
+	int at_marked_delete;
+	int action_count;
+	bool other_card_ready;
 	bool marked[CARD_MAXFILES] = { false };
 	char subtitle[64];
 	int slot;
@@ -1416,20 +1510,17 @@ static void run_manage_saves(void)
 	u16 free_blocks;
 	int selected = 0;
 	int action;
-	int action_count;
 	int selected_count;
 	int batch_result;
 	card_direntry selected_entry;
-	card_direntry preview_entry;
 	char delete_message[96];
 	char delete_detail[96];
-	char preview_comments[65];
-	char preview_title[65];
+	char preview_title[65] = "";
 	ui_list_action result;
 
 	if (have_sd) {
 		int source = UI_Menu("Manage saves", "Choose a source", sources, 2, 0,
-			"A Select   B Back", true);
+			NULL, true);
 
 		if (source < 0)
 			return;
@@ -1446,7 +1537,7 @@ static void run_manage_saves(void)
 	MEM_CARD = slot;
 	set_workflow_state(memory_card_name(slot), NULL);
 	if (!probe_memory_card(slot)) {
-		UI_Message("Manage saves", "Selected memory card is not detected.",
+		UI_MessageError("Manage saves", "Selected memory card is not detected.",
 			"Insert card and try again.");
 		return;
 	}
@@ -1465,18 +1556,11 @@ static void run_manage_saves(void)
 			slot == CARD_SLOTA ? 'A' : 'B', count);
 
 	for (;;) {
-		if (MCardLoadSavePreview(slot, selected, &preview_entry, preview_comments)) {
-			clean_detail_text(preview_title, sizeof(preview_title),
-				(const u8 *)preview_comments, sizeof(preview_comments) - 1);
-			UI_SetSavePreview(preview_entry.banner_fmt, bannerdata, bannerdataCI,
-				tlutbanner, preview_title, "Banner from memory card");
-		} else {
-			UI_ClearSavePreview();
-		}
+		update_save_preview(slot, selected, preview_title);
 		result = UI_SaveList("Manage saves", subtitle, filelist, count, &selected,
-			marked, slot);
+			marked, slot, true);
 		if (result == UI_LIST_DEVICE_REMOVED) {
-			UI_Message("Manage saves", "Selected memory card was removed.",
+			UI_MessageError("Manage saves", "Selected memory card was removed.",
 				"No save operation was started.");
 			return;
 		}
@@ -1488,7 +1572,7 @@ static void run_manage_saves(void)
 			int next_slot = slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
 
 			if (card_slot_is_reserved(next_slot) || !probe_memory_card(next_slot)) {
-				UI_Message("Manage saves", "Other memory-card slot is unavailable.",
+				UI_MessageError("Manage saves", "Other memory-card slot is unavailable.",
 					"Insert an accessible card or return to choose a device.");
 				continue;
 			}
@@ -1524,44 +1608,64 @@ static void run_manage_saves(void)
 			continue;
 
 		selected_count = marked_save_count(marked, count);
-		actions[0] = "Details";
-		actions[1] = "Copy to memory card";
-		actions[2] = "Move to memory card";
-		actions[3] = "Back up to storage";
-		actions[4] = "Delete save";
-		action_enabled[0] = true;
-		action_enabled[1] = !card_slot_is_reserved(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA) &&
+		other_card_ready = !card_slot_is_reserved(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA) &&
 			probe_memory_card(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA);
-		action_enabled[2] = action_enabled[1];
-		action_enabled[3] = have_sd;
-		action_enabled[4] = true;
-		action_count = 5;
+
+		action_count = add_action_heading(actions, 0, "THIS SAVE");
+		at_details = action_count;
+		action_count = add_action(actions, action_count, "Details", true, false);
+		at_copy = action_count;
+		action_count = add_action(actions, action_count, "Copy to memory card",
+			other_card_ready, false);
+		at_move = action_count;
+		action_count = add_action(actions, action_count, "Move to memory card",
+			other_card_ready, false);
+		at_backup = action_count;
+		action_count = add_action(actions, action_count, "Back up to storage",
+			have_sd, false);
+		at_delete = action_count;
+		action_count = add_action(actions, action_count, "Delete save", true, true);
+		at_marked_copy = -1;
+		at_marked_backup = -1;
+		at_marked_clear = -1;
+		at_marked_delete = -1;
 		if (selected_count) {
-			actions[action_count++] = "Copy selected saves";
-			actions[action_count++] = "Back up selected saves";
-			actions[action_count++] = "Delete selected saves";
-			actions[action_count] = "Clear selection";
-			action_enabled[5] = !card_slot_is_reserved(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA) &&
-			probe_memory_card(slot == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA);
-			action_enabled[6] = have_sd;
-			action_enabled[7] = true;
-			action_enabled[8] = true;
-			action_count++;
+			/* The count belongs on screen at the moment the batch is chosen. */
+			snprintf(marked_heading, sizeof(marked_heading), "%d MARKED SAVES",
+				selected_count);
+			snprintf(marked_copy, sizeof(marked_copy), "Copy %d marked saves",
+				selected_count);
+			snprintf(marked_backup, sizeof(marked_backup), "Back up %d marked saves",
+				selected_count);
+			snprintf(marked_delete, sizeof(marked_delete), "Delete %d marked saves",
+				selected_count);
+			action_count = add_action_heading(actions, action_count, marked_heading);
+			at_marked_copy = action_count;
+			action_count = add_action(actions, action_count, marked_copy,
+				other_card_ready, false);
+			at_marked_backup = action_count;
+			action_count = add_action(actions, action_count, marked_backup,
+				have_sd, false);
+			at_marked_clear = action_count;
+			action_count = add_action(actions, action_count, "Clear marks", true, false);
+			/* Destructive last in its group, furthest from the benign rows. */
+			at_marked_delete = action_count;
+			action_count = add_action(actions, action_count, marked_delete, true, true);
 		}
-		action = UI_MenuDisabled("Save actions", (char *)filelist[selected], actions,
-			action_enabled, action_count, 0,
-			"Unavailable actions need storage or other card. B Back", true);
+		action = UI_ActionMenu("Save actions", preview_title[0] ? preview_title :
+			(char *)filelist[selected], actions, action_count, at_details,
+			"Unavailable actions need storage or the other card.");
 		if (action < 0)
 			continue;
-		if (action == 0) {
+		if (action == at_details) {
 			show_save_details(slot, selected);
 			continue;
 		}
-		if (action == 1) {
+		if (action == at_copy) {
 			copy_save_to_card(slot, selected);
 			continue;
 		}
-		if (action == 2) {
+		if (action == at_move) {
 			move_save_to_card(slot, selected);
 			count = CardGetDirectory(slot);
 			if (count <= 0 || count > CARD_MAXFILES)
@@ -1570,19 +1674,23 @@ static void run_manage_saves(void)
 				selected = count - 1;
 			continue;
 		}
-		if (action == 3) {
+		if (action == at_backup) {
 			backup_one_save(slot, selected);
 			continue;
 		}
-		if (selected_count && action == 5) {
+		if (action == at_marked_copy) {
 			copy_marked_saves(slot, marked, count);
 			continue;
 		}
-		if (selected_count && action == 6) {
+		if (action == at_marked_backup) {
 			backup_marked_saves(slot, marked, count);
 			continue;
 		}
-		if (selected_count && action == 7) {
+		if (action == at_marked_clear) {
+			memset(marked, 0, sizeof(marked));
+			continue;
+		}
+		if (action == at_marked_delete) {
 			batch_result = delete_marked_saves(slot, marked, count);
 			if (batch_result < 0)
 				return;
@@ -1604,17 +1712,17 @@ static void run_manage_saves(void)
 					slot == CARD_SLOTA ? 'A' : 'B', count);
 			continue;
 		}
-		if (selected_count && action == 8) {
-			memset(marked, 0, sizeof(marked));
+		/* Deleting is the only remaining action, and the only one that can
+		 * destroy data. Match it explicitly rather than by falling through. */
+		if (action != at_delete)
 			continue;
-		}
 		if (!probe_memory_card(slot)) {
-			UI_Message("Delete save", "Selected memory card is not detected.",
+			UI_MessageError("Delete save", "Selected memory card is not detected.",
 				"Insert card and try again.");
 			return;
 		}
 		if (!MCardGetSaveDetails(slot, selected, &selected_entry, delete_message)) {
-			UI_Message("Delete save", "Could not read selected save details.",
+			UI_MessageError("Delete save", "Could not read selected save details.",
 			"No data was deleted.");
 			return;
 		}
@@ -1627,7 +1735,7 @@ static void run_manage_saves(void)
 			continue;
 		if (!MCardDeleteFile(slot, selected))
 			return;
-		UI_Message("Delete save", "Save deleted.", "Directory will now refresh.");
+		UI_MessageSuccess("Delete save", "Save deleted.", "Directory will now refresh.");
 		count = CardGetDirectory(slot);
 		if (count <= 0 || count > CARD_MAXFILES) {
 			UI_Message("Manage saves", "No saves remain on this memory card.", NULL);
@@ -1658,10 +1766,12 @@ static void run_advanced_menu(void)
 
 	for (;;) {
 		choice = UI_Menu("Advanced options", "High-risk operations", items, 3, 0,
-			"A Select   B Back", true);
+			NULL, true);
 		if (choice < 0)
 			return;
-		if (!require_storage() && choice != 2)
+		/* Formatting only touches the card, so it must not ask for storage.
+		 * Test the choice first: require_storage prompts as a side effect. */
+		if (choice != 2 && !require_storage())
 			continue;
 
 		slot = select_memory_card();
@@ -1685,7 +1795,7 @@ static void run_advanced_menu(void)
 			SD_RawRestoreMode();
 		}
 		else if (!probe_memory_card(slot)) {
-			UI_Message("Format memory card", "Selected memory card is not detected.",
+			UI_MessageError("Format memory card", "Selected memory card is not detected.",
 				"Insert card and try again.");
 		} else {
 			set_workflow_state(memory_card_name(slot), "Not applicable");
@@ -1697,15 +1807,15 @@ static void run_advanced_menu(void)
 				"FORMAT MEMORY CARD"))
 				continue;
 			if (!probe_memory_card(slot)) {
-				UI_Message("Format memory card", "Selected memory card is no longer detected.",
+				UI_MessageError("Format memory card", "Selected memory card is no longer detected.",
 					"Insert the card and start the operation again.");
 				continue;
 			}
 			UI_Progress("Formatting memory card", "Formatting. Do not remove the card.", 0, 1);
 			if (MCardFormat(slot))
-				UI_Message("Format complete", "Memory card formatted successfully.", "Card remounted and verified.");
+				UI_MessageSuccess("Format complete", "Memory card formatted successfully.", "Card remounted and verified.");
 			else
-				UI_Message("Format failed", "Memory card could not be formatted.",
+				UI_MessageError("Format failed", "Memory card could not be formatted.",
 					"No further changes were made by GCMM-EX.");
 		}
 	}
@@ -1729,7 +1839,7 @@ static void run_others_menu(void)
 
 	for (;;) {
 		choice = UI_Menu("Others", "Additional GCMM-EX options", items, 4, 0,
-			"A Select   B Back", true);
+			NULL, true);
 		if (choice < 0)
 			return;
 		if (choice == 0) {
@@ -1744,7 +1854,7 @@ static void run_others_menu(void)
 				CUR_DEVICE = device;
 				have_sd = initFAT(CUR_DEVICE);
 				if (!have_sd)
-					UI_Message("Storage device", "Could not mount selected device.",
+					UI_MessageError("Storage device", "Could not mount selected device.",
 						"Previous storage will be restored when available.");
 			}
 			if (!have_sd && previous_mounted && previous_device &&
@@ -1931,7 +2041,7 @@ void SD_RawBackupMode ()
 	int success;
 
 	if (!probe_memory_card(MEM_CARD)) {
-		UI_Message("RAW backup", "Selected memory card is no longer detected.",
+		UI_MessageError("RAW backup", "Selected memory card is no longer detected.",
 			"Insert the card and start the operation again.");
 		return;
 	}
@@ -1940,12 +2050,14 @@ void SD_RawBackupMode ()
 	RawSetProgressCallback(NULL, NULL);
 	if (success) {
 		char result[80];
+		char size[24];
 
 		UI_Progress("Creating RAW backup", "Finalizing backup", 1, 1);
-		snprintf(result, sizeof(result), "%d bytes written to storage.", writen);
-		UI_Message("RAW backup complete", "Memory card backup completed successfully.", result);
+		format_transfer_size(writen, size, sizeof(size));
+		snprintf(result, sizeof(result), "%s written to storage.", size);
+		UI_MessageSuccess("RAW backup complete", "Memory card backup completed successfully.", result);
 	} else {
-		UI_Message("RAW backup failed", "Memory card backup could not be created.",
+		UI_MessageError("RAW backup failed", "Memory card backup could not be created.",
 			"Check memory card, storage space, and filesystem.");
 	}
 }
@@ -1962,6 +2074,7 @@ void SD_RawRestoreMode ()
 	char review[96];
 	char detail[96];
 	char result[80];
+	char size[24];
 	s32 writen = 0;
 	u32 image_size;
 	raw_progress_context progress;
@@ -1983,7 +2096,7 @@ void SD_RawRestoreMode ()
 		if (files > 1024)
 			files = 1024;
 		action = UI_SaveList("Restore RAW image", (char *)currFolder, filelist,
-			files, &selected, NULL, -1);
+			files, &selected, NULL, -1, false);
 		if (action == UI_LIST_BACK) {
 			if (!leave_backup_folder())
 				return;
@@ -1998,25 +2111,25 @@ void SD_RawRestoreMode ()
 			continue;
 		if (storage_entry_is_folder((char *)filelist[selected])) {
 			if (!enter_backup_folder((char *)filelist[selected]))
-				UI_Message("RAW restore", "Folder path is too long.",
+				UI_MessageError("RAW restore", "Folder path is too long.",
 					"Choose a folder with a shorter path.");
 			selected = 0;
 			continue;
 		}
 		if (!ValidateRawImage(MEM_CARD, (char *)filelist[selected], &image_size)) {
-			UI_Message("RAW restore", "Image is invalid for this memory card.",
+			UI_MessageError("RAW restore", "Image is invalid for this memory card.",
 				"Check image type, file size, and destination card capacity.");
 			continue;
 		}
 		if (!SDLoadCardImageHeader((char *)filelist[selected])) {
-			UI_Message("RAW restore", "Image header is invalid or unreadable.",
+			UI_MessageError("RAW restore", "Image header is invalid or unreadable.",
 				"GCMM-EX cannot verify the image Flash ID.");
 			continue;
 		}
 		getserial(imageserial);
 		sramex = __SYS_LockSramEx();
 		if (!sramex) {
-			UI_Message("RAW restore blocked", "Could not read the console Flash ID.",
+			UI_MessageError("RAW restore blocked", "Could not read the console Flash ID.",
 				"GCMM-EX will not offer an unsafe bypass.");
 			continue;
 		}
@@ -2028,14 +2141,14 @@ void SD_RawRestoreMode ()
 		if (!UI_ConfirmDestructive("Review RAW restore", review, detail, "Restore RAW image"))
 			continue;
 		if (!probe_memory_card(MEM_CARD)) {
-			UI_Message("RAW restore", "Selected memory card is no longer detected.",
+			UI_MessageError("RAW restore", "Selected memory card is no longer detected.",
 				"Insert the card and start the operation again.");
 			continue;
 		}
 #ifdef FLASHIDCHECK
 		for (i = 0; i < 12; i++) {
 			if (imageserial[i] != sramex->flash_id[MEM_CARD][i]) {
-				UI_Message("RAW restore blocked", "Card and image Flash IDs do not match.",
+				UI_MessageError("RAW restore blocked", "Card and image Flash IDs do not match.",
 					"GCMM-EX will not offer an unsafe bypass.");
 				return;
 			}
@@ -2046,14 +2159,15 @@ void SD_RawRestoreMode ()
 		RawSetProgressCallback(show_raw_progress, &progress);
 		if (RestoreRawImage(MEM_CARD, (char *)filelist[selected], &writen) != 1) {
 			RawSetProgressCallback(NULL, NULL);
-			UI_Message("RAW restore failed", "Image could not be restored.",
+			UI_MessageError("RAW restore failed", "Image could not be restored.",
 				"No unsafe retry was attempted.");
 			return;
 		}
 		RawSetProgressCallback(NULL, NULL);
-		snprintf(result, sizeof(result), "%d bytes written to Memory Card %c.", writen,
+		format_transfer_size(writen, size, sizeof(size));
+		snprintf(result, sizeof(result), "%s written to Memory Card %c.", size,
 			MEM_CARD == CARD_SLOTA ? 'A' : 'B');
-		UI_Message("RAW restore complete", "Image restored successfully.", result);
+		UI_MessageSuccess("RAW restore complete", "Image restored successfully.", result);
 		return;
 	}
 }

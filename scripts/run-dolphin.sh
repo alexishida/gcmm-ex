@@ -9,9 +9,71 @@ if [ -f "$project_root/.env" ]; then
   . "$project_root/.env"
   set +a
 fi
-platform=${1:---gc}
 test_user_dir=${DOLPHIN_USER_DIR:-"$project_root/tests/dolphin/user"}
 memorycards_dir=${GCMM_TEST_MEMORYCARDS_DIR:-"$project_root/memorycards"}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: run-dolphin.sh [--gc|--wii|--setup] [--reset-card|--import FILE]
+
+  --gc, --wii     Launch the built DOL for that platform. Defaults to --gc.
+  --setup         Configure the test cards and exit without launching.
+  --reset-card    Overwrite Dolphin's test card with memorycards/backup.USA.raw.
+  --import FILE   Overwrite Dolphin's test card with FILE.
+
+Without a platform, --reset-card and --import configure and exit. Resetting
+discards whatever the emulated card currently holds.
+EOF
+}
+
+platform=
+platform_given=0
+reset_card=0
+import_source=
+
+# No arguments keeps the historical behaviour: build a GC session and launch.
+if [ $# -eq 0 ]; then
+  platform_given=1
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --gc|--wii)
+      platform=$1
+      platform_given=1
+      ;;
+    --setup)
+      platform_given=0
+      ;;
+    --reset-card)
+      reset_card=1
+      ;;
+    --import)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "--import needs a file path." >&2
+        exit 64
+      fi
+      import_source=$1
+      reset_card=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [ "$platform_given" -eq 1 ]; then
+  platform=${platform:---gc}
+else
+  platform=
+fi
 
 set_ini_value() {
   local ini=$1
@@ -80,18 +142,30 @@ prepare_test_cards() {
   # Dolphin resolves custom card paths to region-specific names. Keep the
   # expected USA suffix so it opens the RAW card instead of creating an empty
   # regional card at launch.
-  local raw_source="$memorycards_dir/backup.USA.raw"
+  local raw_source=${import_source:-"$memorycards_dir/backup.USA.raw"}
   local card_b_raw="$test_user_dir/GC/GCMM-EX/Test Card B.USA.raw"
   local config_card_b_raw=$card_b_raw
 
   mkdir -p "$(dirname -- "$config")" "$(dirname -- "$card_b_raw")"
 
-  if [ ! -e "$card_b_raw" ]; then
+  if [ "$reset_card" -eq 1 ] || [ ! -e "$card_b_raw" ]; then
     if [ ! -f "$raw_source" ]; then
       echo "Missing Dolphin test card: $raw_source" >&2
       exit 1
     fi
+    # A card image is a whole number of 8 KiB blocks. A file that is not one
+    # would leave Dolphin with a card it cannot open.
+    local source_bytes
+    source_bytes=$(wc -c < "$raw_source")
+    if [ "$source_bytes" -eq 0 ] || [ $((source_bytes % 8192)) -ne 0 ]; then
+      echo "Not a RAW card image ($source_bytes bytes, expected a multiple of 8192): $raw_source" >&2
+      exit 1
+    fi
+    if [ "$reset_card" -eq 1 ] && [ -e "$card_b_raw" ]; then
+      echo "Discarding current emulated card contents."
+    fi
     cp -- "$raw_source" "$card_b_raw"
+    echo "Imported $raw_source into Slot B ($((source_bytes / 1024 / 1024)) MB, $((source_bytes / 8192)) blocks)."
   fi
 
   if [[ "$dolphin" == *.exe ]]; then
@@ -108,19 +182,13 @@ prepare_test_cards() {
   set_ini_value "$config" Core MemcardBPath "$config_card_b_raw"
 }
 
+dol=
 case "$platform" in
   --gc)
     dol="$project_root/releases/gcmm_ex_GC.dol"
     ;;
   --wii)
     dol="$project_root/releases/gcmm_ex_WII.dol"
-    ;;
-  --setup)
-    platform=
-    ;;
-  *)
-    echo "Usage: $0 [--gc|--wii|--setup]" >&2
-    exit 64
     ;;
 esac
 
