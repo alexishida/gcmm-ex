@@ -130,11 +130,14 @@ alignment.
 Do not build devkitPPC from source unless you are developing the toolchain
 itself. Use the package installation method documented by devkitPro.
 
-After installation, create a local `.env` file in the GCMM-EX root. Adjust
-`DEVKITPRO` only if your devkitPro installation uses a different location.
-`.env` is ignored by Git and must remain local to each developer.
+After installation, copy `.env.sample` to a local `.env` file in the GCMM-EX
+root. Adjust `DEVKITPRO` only if your devkitPro installation uses a different
+location. `.env` is ignored by Git and must remain local to each developer.
 
 ```sh
+cp .env.sample .env
+
+# Native devkitPro build environment.
 DEVKITPRO="/opt/devkitpro"
 DEVKITPPC="$DEVKITPRO/devkitPPC"
 PORTLIBS="$DEVKITPRO/portlibs/ppc"
@@ -233,6 +236,24 @@ Makefile.wii         Wii build configuration
 See [source/README.md](source/README.md) for source-module boundaries, shared
 buffer ownership, binary-format constraints, and contributor guidance.
 
+## Build script
+
+Requires GNU Make plus a configured devkitPPC toolchain with libogc2/libdvm,
+PowerPC FreeType, and zlib. Create `.env` as described in
+[Build from source](#build-from-source), then run:
+
+```sh
+./scripts/build.sh       # Build GameCube and Wii
+./scripts/build.sh gc    # Build GameCube only
+./scripts/build.sh wii   # Build Wii only
+./scripts/build.sh clean # Remove generated outputs
+./scripts/build.sh --help
+```
+
+Builds produce `releases/gcmm_ex_GC.dol` and `releases/gcmm_ex_WII.dol`.
+The script uses `RETRO_BIN` and `RETRO_PLATFORM` when both are defined;
+otherwise it uses the configured host toolchain.
+
 ## Credits and license
 
 GCMM-EX reuses important technical code from
@@ -243,5 +264,5 @@ CowTRobo, Samsom, Tantric, tueidj, dronesplitter, PabloACZ, Pikachu025,
 Nano/Excelsiior, bm123456, themanuel, DacoTaco, Extrems, fincs, ChaN,
 dragonbane0, Zephiles, Ralf, f3bandit, and other contributors.
 
-See [changelog.md](changelog.md) for release history. GCMM-EX is distributed
+See [CHANGELOG.md](CHANGELOG.md) for release history. GCMM-EX is distributed
 under the [MIT License](LICENSE.md).
