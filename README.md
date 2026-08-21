@@ -66,7 +66,7 @@ serial and checksum handling required for restoration to another card.
 The storage layer supports FAT12, FAT16, FAT32, and exFAT through libdvm.
 FAT32 remains the most broadly compatible option for homebrew use.
 
-GCMM-EX selects storage from **Others → Storage devices**. After changing a
+GCMM-EX selects storage from **Settings & Info → Storage devices**. After changing a
 device, return to that screen to detect and mount it again. Avoid connecting
 more than one USB storage device in Wii mode.
 
@@ -95,9 +95,14 @@ Run `releases/gcmm_ex_GC.dol` from a compatible loader, such as Swiss or SDLoad.
 | Previous or next storage device | `L` / `R` | `1` / `2` |
 | Help | `Start` | `HOME` / Classic `+` |
 
-The home screen provides **Manage saves**, **Back up memory card**, **Restore
-backup**, **Others**, and **Exit**. Complete-card backup, restoration, and formatting
-are under **Others → Advanced options**.
+The home screen provides **Manage saves**, **Backup saves (GCI)**,
+**Restore from backup**, **Backup full card (RAW)**, **Restore full card
+(RAW)**, **Format memory card**, **Device & storage details**, **Settings &
+Info**, and **Exit**. Complete-card backup, restoration, and formatting are
+first-class home actions rather than a hidden submenu. A compact status strip
+along the top shows the cards and storage; **Device & storage details** opens
+the full status screen. **Settings & Info** covers storage selection, controls,
+and About.
 
 ## Save-data safety
 

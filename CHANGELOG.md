@@ -35,6 +35,16 @@ management and a modern workflow for GameCube and Wii.
 - Rewrote `storage_entry_name_is_safe`/`storage_folder_is_safe` to reject `.`,
   `..`, `/`, and `\` in file and folder names used to build storage paths.
 
+### Changed
+
+- Reworked the home menu to remove hidden functionality: full-card RAW
+  backup/restore and formatting are now first-class home actions instead of
+  living under **Others → Advanced options**.
+- Replaced the large home-screen status card with a compact status strip and
+  added a **Device & storage details** screen.
+- Renamed **Others** to **Settings & Info** (storage selection, controls, and
+  About) and removed the **Advanced options** submenu.
+
 ## [v1.0.0 (alpha)]
 
 ### Added

@@ -83,6 +83,11 @@ void UI_Message(const char *title, const char *message, const char *detail);
 void UI_MessageSuccess(const char *title, const char *message, const char *detail);
 /** Show a failed operation. message states what went wrong, detail how to fix. */
 void UI_MessageError(const char *title, const char *message, const char *detail);
+
+/** Read-only summary of connected memory cards, storage, and the workflow. */
+void UI_DeviceDetails(const char *card_a, const char *card_b,
+	const char *storage, const char *transfer);
+
 /** Label and value pair shown in the save-details grid. */
 typedef struct {
 	const char *label;

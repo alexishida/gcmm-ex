@@ -1787,72 +1787,80 @@ static void run_manage_saves(void)
 	}
 }
 
-static void run_advanced_menu(void)
+static void run_raw_backup(void)
 {
-	static const char *const items[] = {
-		"Full memory-card RAW backup",
-		"Restore RAW/GCP/MCI image",
-		"Format memory card"
-	};
-	int choice;
+	int slot;
+	char message[96];
+
+	set_workflow_state(device_name(CUR_DEVICE), NULL);
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+
+	set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
+
+	snprintf(message, sizeof(message),
+		"Create a complete RAW image of Memory Card %c on %s.",
+		slot == CARD_SLOTA ? 'A' : 'B', device_name(CUR_DEVICE));
+	if (UI_Confirm("Review RAW backup", message,
+		"The card is read-only during this operation.", "Start RAW backup"))
+		SD_RawBackupMode();
+}
+
+static void run_raw_restore(void)
+{
+	int slot;
+
+	set_workflow_state(device_name(CUR_DEVICE), NULL);
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+	set_workflow_state(device_name(CUR_DEVICE), memory_card_name(slot));
+	SD_RawRestoreMode();
+}
+
+static void run_format_card(void)
+{
 	int slot;
 	char format_message[80];
 
-	for (;;) {
-		choice = UI_Menu("Advanced options", "High-risk operations", items, 3, 0,
-			NULL, true);
-		if (choice < 0)
-			return;
-		/* Formatting only touches the card, so it must not ask for storage.
-		 * Test the choice first: require_storage prompts as a side effect. */
-		if (choice != 2 && !require_storage())
-			continue;
-
-		slot = select_memory_card();
-		if (slot < 0)
-			continue;
-		MEM_CARD = slot;
-		if (choice == 0) {
-			char message[96];
-
-			set_workflow_state(memory_card_name(slot), device_name(CUR_DEVICE));
-
-			snprintf(message, sizeof(message),
-				"Create a complete RAW image of Memory Card %c on %s.",
-				slot == CARD_SLOTA ? 'A' : 'B', device_name(CUR_DEVICE));
-			if (UI_Confirm("Review RAW backup", message,
-				"The card is read-only during this operation.", "Start RAW backup"))
-				SD_RawBackupMode();
-		}
-		else if (choice == 1) {
-			set_workflow_state(device_name(CUR_DEVICE), memory_card_name(slot));
-			SD_RawRestoreMode();
-		}
-		else if (!probe_memory_card(slot)) {
-			UI_MessageError("Format memory card", "Selected memory card is not detected.",
-				"Insert card and try again.");
-		} else {
-			set_workflow_state(memory_card_name(slot), "Not applicable");
-			snprintf(format_message, sizeof(format_message),
-				"All saves on Memory Card %c will be erased.",
-				slot == CARD_SLOTA ? 'A' : 'B');
-			if (!UI_ConfirmDestructive("Format memory card", format_message,
-				"Select FORMAT MEMORY CARD only if you intend to erase all data.",
-				"FORMAT MEMORY CARD"))
-				continue;
-			if (!probe_memory_card(slot)) {
-				UI_MessageError("Format memory card", "Selected memory card is no longer detected.",
-					"Insert the card and start the operation again.");
-				continue;
-			}
-			UI_Progress("Formatting memory card", "Formatting. Do not remove the card.", 0, 1);
-			if (MCardFormat(slot))
-				UI_MessageSuccess("Format complete", "Memory card formatted successfully.", "Card remounted and verified.");
-			else
-				UI_MessageError("Format failed", "Memory card could not be formatted.",
-					"No further changes were made by GCMM-EX.");
-		}
+	slot = select_memory_card();
+	if (slot < 0)
+		return;
+	MEM_CARD = slot;
+	if (!probe_memory_card(slot)) {
+		UI_MessageError("Format memory card", "Selected memory card is not detected.",
+			"Insert card and try again.");
+		return;
 	}
+	set_workflow_state(memory_card_name(slot), "Not applicable");
+	snprintf(format_message, sizeof(format_message),
+		"All saves on Memory Card %c will be erased.",
+		slot == CARD_SLOTA ? 'A' : 'B');
+	if (!UI_ConfirmDestructive("Format memory card", format_message,
+		"Select FORMAT MEMORY CARD only if you intend to erase all data.",
+		"FORMAT MEMORY CARD"))
+		return;
+	if (!probe_memory_card(slot)) {
+		UI_MessageError("Format memory card", "Selected memory card is no longer detected.",
+			"Insert the card and start the operation again.");
+		return;
+	}
+	UI_Progress("Formatting memory card", "Formatting. Do not remove the card.", 0, 1);
+	if (MCardFormat(slot))
+		UI_MessageSuccess("Format complete", "Memory card formatted successfully.", "Card remounted and verified.");
+	else
+		UI_MessageError("Format failed", "Memory card could not be formatted.",
+			"No further changes were made by GCMM-EX.");
+}
+
+/* Full status screen replacing the large home-screen status card. */
+static void show_device_details(const char *card_a, const char *card_b,
+	const char *storage, const char *transfer)
+{
+	UI_DeviceDetails(card_a, card_b, storage, transfer);
 }
 
 static void show_information(void)
@@ -1864,7 +1872,6 @@ static void run_others_menu(void)
 {
 	static const char *const items[] = {
 		"Storage devices",
-		"Advanced options",
 		"Controls and help",
 		"About"
 	};
@@ -1872,7 +1879,7 @@ static void run_others_menu(void)
 	int device;
 
 	for (;;) {
-		choice = UI_Menu("Others", "Additional GCMM-EX options", items, 4, 0,
+		choice = UI_Menu("Others", "Settings and information", items, 3, 0,
 			NULL, true);
 		if (choice < 0)
 			return;
@@ -1897,8 +1904,6 @@ static void run_others_menu(void)
 				have_sd = initFAT(CUR_DEVICE);
 			}
 		} else if (choice == 1) {
-			run_advanced_menu();
-		} else if (choice == 2) {
 			UI_Help();
 		} else {
 			show_information();
@@ -1927,26 +1932,44 @@ static void run_home_menu(void)
 				return;
 			continue;
 		}
-		if (choice == 0) {
+		switch (choice) {
+		case 0:
 			run_manage_saves();
 			continue;
-		}
-		if (choice == 3) {
+		case 1:
+			if (!require_storage())
+				continue;
+			run_full_backup();
+			continue;
+		case 2:
+			if (!require_storage())
+				continue;
+			run_restore_backup();
+			continue;
+		case 3:
+			if (!require_storage())
+				continue;
+			run_raw_backup();
+			continue;
+		case 4:
+			if (!require_storage())
+				continue;
+			run_raw_restore();
+			continue;
+		case 5:
+			run_format_card();
+			continue;
+		case 6:
+			show_device_details(card_a, card_b, storage, transfer);
+			continue;
+		case 7:
 			run_others_menu();
 			continue;
-		}
-		if (choice == 4) {
+		default:
 			if (UI_Confirm("Exit GCMM-EX", "Return to loader or system menu?", NULL,
 				"Exit"))
 				return;
 			continue;
-		}
-		if (!require_storage())
-			continue;
-		if (choice == 1) {
-			run_full_backup();
-		} else {
-			run_restore_backup();
 		}
 	}
 }

@@ -716,37 +716,43 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 	};
 	static const char *const items[] = {
 		"Manage saves",
-		"Back up memory card",
-		"Restore backup",
-		"Others",
+		"Backup saves (GCI)",
+		"Restore from backup",
+		"Backup full card (RAW)",
+		"Restore full card (RAW)",
+		"Format memory card",
+		"Device & storage details",
+		"Settings & Info",
 		"Exit"
 	};
+	int item_count = sizeof(items) / sizeof(items[0]);
 	int selected = initial_selection;
 	int i;
 	ui_key key;
 
-	if (selected < 0 || selected >= 5)
+	if (selected < 0 || selected >= item_count)
 		selected = 0;
 	ui_wait_release();
 	for (;;) {
 		ui_begin("GCMM-EX", "Connected devices");
-		DrawBoxFilled(42, 104, 595, 189, UI_PANEL_ALT);
-		setfontsize(12);
+		/* Compact status strip: cards on the first line, storage and workflow
+		 * on the second. Full detail lives in "Device & storage details". */
+		setfontsize(11);
 		setfontcolour(UI_TEXT);
-		DrawText(58, 124, (char *)card_a);
-		DrawText(330, 124, (char *)card_b);
+		DrawText(42, 108, (char *)card_a);
+		DrawText(320, 108, (char *)card_b);
 		setfontcolour(UI_MUTED);
-		DrawText(58, 150, (char *)storage);
-		DrawText(58, 176, (char *)transfer);
+		DrawText(42, 126, (char *)storage);
+		DrawText(320, 126, (char *)transfer);
 
 		setfontsize(14);
 		setfontcolour(UI_TEXT);
-		DrawText(42, 216, "What would you like to do?");
-		for (i = 0; i < 5; i++) {
-			int y = 246 + i * 31;
+		DrawText(42, 160, "What would you like to do?");
+		for (i = 0; i < item_count; i++) {
+			int y = 180 + i * 27;
 			if (i == selected) {
-				DrawBoxFilled(42, y - 22, 595, y + 9, UI_SELECTED);
-				DrawBoxFilled(42, y - 22, 47, y + 9, UI_ACCENT);
+				DrawBoxFilled(42, y - 20, 595, y + 7, UI_SELECTED);
+				DrawBoxFilled(42, y - 20, 47, y + 7, UI_ACCENT);
 				setfontcolour(UI_TEXT);
 				DrawText(60, y, ">");
 			} else {
@@ -759,9 +765,9 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 
 		key = ui_read_key();
 		if (key == UI_KEY_UP || key == UI_KEY_LEFT) {
-			selected = selected > 0 ? selected - 1 : 4;
+			selected = selected > 0 ? selected - 1 : item_count - 1;
 		} else if (key == UI_KEY_DOWN || key == UI_KEY_RIGHT) {
-			selected = selected < 4 ? selected + 1 : 0;
+			selected = selected < item_count - 1 ? selected + 1 : 0;
 		} else if (key == UI_KEY_CONFIRM) {
 			ui_wait_release();
 			return selected;
@@ -1066,6 +1072,43 @@ void UI_MessageSuccess(const char *title, const char *message, const char *detai
 void UI_MessageError(const char *title, const char *message, const char *detail)
 {
 	ui_message(title, message, detail, UI_MESSAGE_ERROR);
+}
+
+/* Read-only summary of connected devices and the current workflow. Rendered as
+ * a plain screen instead of a home-card so the home menu keeps room for more
+ * actions. */
+void UI_DeviceDetails(const char *card_a, const char *card_b,
+	const char *storage, const char *transfer)
+{
+	static const ui_hint hints[] = {
+		{ "B", "Back" }
+	};
+	ui_key key;
+
+	ui_wait_release();
+	for (;;) {
+		ui_begin("Device & storage details", NULL);
+		DrawBoxFilled(42, 132, 595, 320, UI_PANEL_ALT);
+		DrawBox(42, 132, 595, 320, UI_BORDER);
+		setfontsize(14);
+		setfontcolour(UI_TEXT);
+		DrawText(58, 158, (char *)(card_a ? card_a : ""));
+		DrawText(58, 194, (char *)(card_b ? card_b : ""));
+		DrawText(58, 230, (char *)(storage ? storage : ""));
+		DrawText(58, 266, (char *)(transfer ? transfer : ""));
+		setfontsize(11);
+		setfontcolour(UI_MUTED);
+		DrawText(58, 306,
+			"Status shown is sampled when this screen is opened.");
+		ui_footer_hints(hints, 1, NULL);
+		ShowScreen();
+		key = ui_read_key();
+		if (key == UI_KEY_CONFIRM || key == UI_KEY_BACK) {
+			ui_wait_release();
+			return;
+		}
+		VIDEO_WaitVSync();
+	}
 }
 
 /*
