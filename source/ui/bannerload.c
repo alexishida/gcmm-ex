@@ -38,42 +38,15 @@ static u8 convert4to8(u16 v) {
 }
 
 static u32 Decode5A3(u16 val, int row) {
-	static u32 bg_color = 0x00000000;
-
-	// The decoder expects the banner/icon preview to use the matching
-	// 37-pixel gradient background before drawing translucent pixels.
-	//To do: get the actual color in the screen to make true alpha blending
-	int r3,g3,b3;
-	int r1 = (BLUECOL&0x0000FF) >> 0;	int g1 = (BLUECOL&0x00FF00) >> 8;	int b1 = (BLUECOL&0xFF0000) >> 16;
-	int r2 = (PURPLECOL&0x0000FF) >> 0;	int g2 = (PURPLECOL&0x00FF00) >> 8;	int b2 = (PURPLECOL&0xFF0000) >> 16;
-
-	int midr, midg, midb;
-	midr = (r1 * 0.5) + (r2 * (1 - 0.5));
-	midg = (g1 * 0.5) + (g2 * (1 - 0.5));
-	midb = (b1 * 0.5) + (b2 * (1 - 0.5));	
-	float p;
-	float boxheight = 37.0; //DrawBoxFilledGradient() y2-y1
-	int temp = 0;
-	//correct icon displacement over the gradient box
-	temp = row +3;
-	if (boxheight-temp > boxheight*LOCATION)
-	{	
-		p = ((float)(boxheight-temp)-(boxheight*LOCATION))/((float)(boxheight)-((boxheight)*LOCATION));
-		r3 = (r1 * p) + (midr * (1 - p));
-		g3 = (g1 * p) + (midg * (1 - p));
-		b3 = (b1 * p) + (midb * (1 - p));
-	}
-	else
-	{
-		p = ((float)(boxheight-temp))/((float)(boxheight)*LOCATION);
-		r3 = (midr * p) + (r2 * (1 - p));
-		g3 = (midg * p) + (g2 * (1 - p));
-		b3 = (midb * p) + (b2 * (1 - p));		
-	}
-
-	bg_color = (b3<<16)|(g3<<8)|r3;
-	
+	// The translucent palette/icon mode blends against an opaque fake
+	// gradient background, which would scramble the real colors of most
+	// native saves (their banners rely on alpha for smooth edges). Ignore
+	// that blend and extract the true RGB for the preview. The alpha value
+	// is not composited here; showing the raw texel color keeps the image
+	// correct.
 	int r, g, b, a;
+	(void)row;
+
 	//use 0x8000 as a bit mask
 	if ((val & 0x8000)) {
 		r = convert5to8((val >> 10) & 0x1f);
@@ -83,9 +56,9 @@ static u32 Decode5A3(u16 val, int row) {
 	}
 	else {
 		a = convert3to8((val >> 12) & 0x7);
-		r = (convert4to8((val >> 8) & 0xf) *a+(bg_color & 0xFF) * (255 - a)) / 255;
-		g = (convert4to8((val >> 4) & 0xf)*a+((bg_color >> 8) & 0xFF) * (255 - a)) / 255;
-		b = (convert4to8(val & 0xf) * a + ((bg_color >> 16) & 0xFF) * (255 - a)) / 255;
+		r = convert4to8((val >> 8) & 0xf);
+		g = convert4to8((val >> 4) & 0xf);
+		b = convert4to8(val & 0xf);
 		a = 0xFF;
 	}
 	//pack into 32 bits and return (b,g,r order)

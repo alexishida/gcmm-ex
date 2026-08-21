@@ -25,6 +25,10 @@ management and a modern workflow for GameCube and Wii.
   `initFAT` and `detect_devices`; drivers are now shut down on those paths.
 - `format_transfer_size` showed an incorrect decimal digit for the MB value;
   the fractional part is now computed correctly.
+- Save banners with translucent pixels (most native GameCube banners) showed
+  scrambled colors: the preview blended alpha against a fake gradient that
+  varied per tile. The banner/icon decoder now extracts the true RGB5A3 color
+  instead, removing the corruption.
 
 ### Security
 
