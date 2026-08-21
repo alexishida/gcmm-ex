@@ -54,8 +54,7 @@ int UI_ActionMenu(const char *title, const char *subtitle,
 #define UI_ACTION_MAX_ITEMS 12
 
 /** Show main task menu with current card, storage, and transfer state. */
-int UI_HomeMenu(const char *card_a, const char *card_b,
-	const char *storage, const char *transfer, int initial_selection);
+int UI_HomeMenu(int initial_selection);
 /**
  * Show paged saves, update selection/marks, and return requested action.
  *

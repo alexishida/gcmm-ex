@@ -40,8 +40,9 @@ management and a modern workflow for GameCube and Wii.
 - Reworked the home menu to remove hidden functionality: full-card RAW
   backup/restore and formatting are now first-class home actions instead of
   living under **Others → Advanced options**.
-- Replaced the large home-screen status card with a compact status strip and
-  added a **Device & storage details** screen.
+- Replaced the large home-screen status card with a dedicated **Device &
+  storage details** screen, keeping the home menu free of truncated status
+  text.
 - Renamed **Others** to **Settings & Info** (storage selection, controls, and
   About) and removed the **Advanced options** submenu.
 

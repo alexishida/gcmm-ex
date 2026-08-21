@@ -1925,7 +1925,7 @@ static void run_home_menu(void)
 		card_status(card_b, sizeof(card_b), CARD_SLOTB);
 		storage_status(storage, sizeof(storage));
 		workflow_status(transfer, sizeof(transfer));
-		choice = UI_HomeMenu(card_a, card_b, storage, transfer, 0);
+		choice = UI_HomeMenu(0);
 		if (choice < 0) {
 			if (UI_Confirm("Exit GCMM-EX", "Return to loader or system menu?", NULL,
 				"Exit"))

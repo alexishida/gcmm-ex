@@ -99,10 +99,9 @@ The home screen provides **Manage saves**, **Backup saves (GCI)**,
 **Restore from backup**, **Backup full card (RAW)**, **Restore full card
 (RAW)**, **Format memory card**, **Device & storage details**, **Settings &
 Info**, and **Exit**. Complete-card backup, restoration, and formatting are
-first-class home actions rather than a hidden submenu. A compact status strip
-along the top shows the cards and storage; **Device & storage details** opens
-the full status screen. **Settings & Info** covers storage selection, controls,
-and About.
+first-class home actions rather than a hidden submenu, and **Device & storage
+details** shows the memory-card, storage, and workflow status. **Settings &
+Info** covers storage selection, controls, and About.
 
 ## Save-data safety
 

@@ -288,13 +288,12 @@ static void ui_begin(const char *title, const char *subtitle)
 	DrawBoxFilled(24, 24, 615, 69, UI_PANEL_ALT);
 	DrawBoxFilled(24, 68, 615, 70, UI_ACCENT);
 	DrawBMPAt((u8 *)ui_logo_bmp, 482, 36);
-	setfontsize(12);
-	setfontcolour(UI_MUTED);
-	DrawText(370, 55, (char *)appversion);
-
 	setfontsize(20);
 	setfontcolour(UI_TEXT);
 	DrawText(42, 55, (char *)title);
+	setfontsize(12);
+	setfontcolour(UI_MUTED);
+	DrawText(42 + TextWidth((char *)title) + 12, 55, (char *)appversion);
 	if (subtitle && subtitle[0]) {
 		setfontsize(12);
 		setfontcolour(UI_MUTED);
@@ -707,8 +706,7 @@ int UI_Menu(const char *title, const char *subtitle,
 		initial_selection, help, allow_back);
 }
 
-int UI_HomeMenu(const char *card_a, const char *card_b,
-	const char *storage, const char *transfer, int initial_selection)
+int UI_HomeMenu(int initial_selection)
 {
 	static const ui_hint hints[] = {
 		{ "A", "Select" },
@@ -734,25 +732,15 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 		selected = 0;
 	ui_wait_release();
 	for (;;) {
-		ui_begin("GCMM-EX", "Connected devices");
-		/* Compact status strip: cards on the first line, storage and workflow
-		 * on the second. Full detail lives in "Device & storage details". */
-		setfontsize(11);
+		ui_begin("GCMM-EX", NULL);
+		setfontsize(16);
 		setfontcolour(UI_TEXT);
-		DrawText(42, 108, (char *)card_a);
-		DrawText(320, 108, (char *)card_b);
-		setfontcolour(UI_MUTED);
-		DrawText(42, 126, (char *)storage);
-		DrawText(320, 126, (char *)transfer);
-
-		setfontsize(14);
-		setfontcolour(UI_TEXT);
-		DrawText(42, 160, "What would you like to do?");
+		DrawText(42, 116, "What would you like to do?");
 		for (i = 0; i < item_count; i++) {
-			int y = 180 + i * 27;
+			int y = 140 + i * 30;
 			if (i == selected) {
-				DrawBoxFilled(42, y - 20, 595, y + 7, UI_SELECTED);
-				DrawBoxFilled(42, y - 20, 47, y + 7, UI_ACCENT);
+				DrawBoxFilled(42, y - 22, 595, y + 8, UI_SELECTED);
+				DrawBoxFilled(42, y - 22, 47, y + 8, UI_ACCENT);
 				setfontcolour(UI_TEXT);
 				DrawText(60, y, ">");
 			} else {
@@ -760,7 +748,29 @@ int UI_HomeMenu(const char *card_a, const char *card_b,
 			}
 			DrawText(82, y, (char *)items[i]);
 		}
-		ui_footer_hints(hints, 2, NULL);
+		ui_footer_bar();
+		{
+			int x = UI_FOOTER_LEFT;
+			int gap = UI_HINT_GAP;
+			int fi;
+			/* Start (help) on the left */
+			x += ui_draw_chip(x, UI_BTN_HELP);
+			setfontcolour(UI_MUTED);
+			DrawText(x + UI_CHIP_GAP, UI_FOOTER_BASE, "Start");
+			x += UI_CHIP_GAP + TextWidth("Start") + gap;
+			/* Navigation hints */
+			for (fi = 0; fi < 2; fi++) {
+				x += ui_draw_chip(x, (char *)hints[fi].button);
+				setfontcolour(UI_MUTED);
+				DrawText(x + UI_CHIP_GAP, UI_FOOTER_BASE, (char *)hints[fi].label);
+				x += UI_CHIP_GAP + TextWidth(hints[fi].label) + gap;
+			}
+			/* Creator credit, right-aligned */
+			setfontcolour(UI_MUTED);
+			DrawText(UI_FOOTER_RIGHT - TextWidth("Created by Alex Ishida"),
+				UI_FOOTER_BASE, "Created by Alex Ishida");
+		}
+		setfontsize(14);
 		ShowScreen();
 
 		key = ui_read_key();
