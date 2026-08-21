@@ -98,7 +98,7 @@ static int storage_entry_name_is_safe(const char *name)
 
 static int storage_folder_is_safe(void)
 {
-	return strnlen((char *)currFolder, sizeof(currFolder)) < sizeof(currFolder);
+	return storage_entry_name_is_safe((const char *)currFolder);
 }
 
 bool file_exists(const char * filename)
@@ -222,6 +222,10 @@ int SDSaveMCImage ()
 		{
 			// file failed to open, so something failed in the write; retry
 			retries ++;
+			if (retries > 9)
+			{
+				return 0;
+			}
 			continue;
 		}
 		if (!get_file_size(handle, &check)) {

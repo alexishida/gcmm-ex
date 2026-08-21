@@ -11,7 +11,7 @@ management and a modern workflow for GameCube and Wii.
   <img src="docs/screenshots/wii-advanced.png" alt="GCMM-EX advanced options screen running on Wii in Dolphin" width="30%">
 </p>
 
-**Current version:** v1.0.0 (alpha)
+**Current version:** v1.0.1
 
 - Backup / restore / copy / move
 - GCI backup, GCI GCS SAV restore
@@ -158,12 +158,25 @@ freetype-config --version
 
 ### Build commands
 
+With a native devkitPro environment checked out to `.env`:
+
 ```sh
 source .env
 make       # Build GameCube and Wii
 make gc    # GameCube only
 make wii   # Wii only
 make clean # Remove generated outputs
+```
+
+This repository's `.env` can instead target a Dockerized toolchain via
+retrodev. When `RETRO_BIN` and `RETRO_PLATFORM` are set, run the build through
+the wrapper instead of calling `make` directly on the host:
+
+```sh
+source .env
+"$RETRO_BIN" "$RETRO_PLATFORM" make       # Build GameCube and Wii
+"$RETRO_BIN" "$RETRO_PLATFORM" make gc    # GameCube only
+"$RETRO_BIN" "$RETRO_PLATFORM" make wii   # Wii only
 ```
 
 If `freetype-config` is missing, install the PowerPC FreeType port or follow

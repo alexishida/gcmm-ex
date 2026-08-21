@@ -46,6 +46,8 @@ void ARAMPut(unsigned char *src, char *dst, int len)
     misalignaddress = ((u32) dst & ~0x1f);
     misalignedbytestodo = 32 - ((u32) dst & 0x1f);
     misalignedbytes = ((u32) dst & 0x1f);
+    if (misalignedbytestodo > (u32)len)
+      misalignedbytestodo = len;
     ARAMFetch(aramfix, (char *) misalignaddress, 32);
 
     /*** Update from source ***/

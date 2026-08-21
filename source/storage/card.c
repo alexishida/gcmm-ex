@@ -1005,8 +1005,8 @@ static s32 __card_txhandler(s32 chn,s32 dev)
 	card = &cardmap[chn];
 
 	err = 0;
-	if(EXI_Deselect(chn)==0) ret |= err;
-	if(EXI_Unlock(chn)==0) ret |= err;
+	if(EXI_Deselect(chn)==0) err |= 0x01;
+	if(EXI_Unlock(chn)==0) err |= 0x02;
 	
 	cb = card->card_tx_cb;
 	if(cb) {

@@ -2,7 +2,7 @@
 <app version="1">
 	<name>GCMM-EX</name>
 	<coder>Alex Ishida</coder>
-	<version>v1.0.0 (alpha)</version>
+	<version>v1.0.1</version>
 	<release_date>20211119000000</release_date>
 	<short_description>GameCube memory-card manager</short_description>
 	<long_description>Complete memory-card management

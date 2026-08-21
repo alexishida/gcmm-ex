@@ -66,7 +66,7 @@ char fatpath[8];
      can be unmounted again ***/
 static char fatbase[8];
 
-const char appversion[] = "v1.0.0 (alpha)";
+const char appversion[] = "v1.0.1";
 
 /* Legacy I/O workflows retained while their task screens are migrated. */
 void SD_RawBackupMode(void);
@@ -183,8 +183,8 @@ static void detect_devices(){
 			{
 				DEVICES[DEV_WIIUSB] = DEV_AVAIL;
 				DEVICES[DEV_NUM] +=1;
-				__io_usbstorage.shutdown(&__io_usbstorage);
 			}
+			__io_usbstorage.shutdown(&__io_usbstorage);
 		}
 #endif
 	if (!have_sd)
@@ -328,11 +328,14 @@ static bool initFAT(int device)
 			if (!__io_gcsda.isInserted(&__io_gcsda))
 			{
 				WaitPrompt("No SD Gecko inserted in SLOT A!");
+				__io_gcsda.shutdown(&__io_gcsda);
 				return false;
 			}
 			if (!mount_storage_device(SDGECKOA_PATH, &__io_gcsda,
-				"Error mounting SD Gecko in Slot A."))
+				"Error mounting SD Gecko in Slot A.")) {
+				__io_gcsda.shutdown(&__io_gcsda);
 				return false;
+			}
 			DEVICES[DEV_GCSDA] = DEV_MOUNTED;
 			break;
 		
@@ -341,11 +344,14 @@ static bool initFAT(int device)
 			if (!__io_gcsdb.isInserted(&__io_gcsdb))
 			{
 				WaitPrompt("No SD card inserted in SLOT B!");
+				__io_gcsdb.shutdown(&__io_gcsdb);
 				return false;
 			}
 			if (!mount_storage_device(SDGECKOB_PATH, &__io_gcsdb,
-				"Error mounting SD Gecko in Slot B."))
+				"Error mounting SD Gecko in Slot B.")) {
+				__io_gcsdb.shutdown(&__io_gcsdb);
 				return false;
+			}
 			DEVICES[DEV_GCSDB] = DEV_MOUNTED;
 			break;
 #ifdef HW_DOL
@@ -354,11 +360,14 @@ static bool initFAT(int device)
 			if (!__io_gcsd2.isInserted(&__io_gcsd2))
 			{
 				WaitPrompt("No SD card inserted in SD2SP2!");
+				__io_gcsd2.shutdown(&__io_gcsd2);
 				return false;
 			}
 			if (!mount_storage_device(SD2SP2_PATH, &__io_gcsd2,
-				"Error mounting SD2SP2."))
+				"Error mounting SD2SP2.")) {
+				__io_gcsd2.shutdown(&__io_gcsd2);
 				return false;
+			}
 			DEVICES[DEV_GCSDC] = DEV_MOUNTED;
 			break;
 
@@ -367,11 +376,14 @@ static bool initFAT(int device)
 			if (!__io_gcode.isInserted(&__io_gcode))
 			{
 				WaitPrompt("No SD card inserted in GCLoader!");
+				__io_gcode.shutdown(&__io_gcode);
 				return false;
 			}
 			if (!mount_storage_device(GCLOADER_PATH, &__io_gcode,
-				"Error mounting GC Loader."))
+				"Error mounting GC Loader.")) {
+				__io_gcode.shutdown(&__io_gcode);
 				return false;
+			}
 			DEVICES[DEV_GCODE] = DEV_MOUNTED;
 			break;
 #elif HW_RVL
@@ -380,11 +392,14 @@ static bool initFAT(int device)
 			if (!__io_wiisd.isInserted(&__io_wiisd))
 			{
 				WaitPrompt("No SD card inserted in front SD slot!");
+				__io_wiisd.shutdown(&__io_wiisd);
 				return false;
 			}
 			if (!mount_storage_device(WIISD_PATH, &__io_wiisd,
-				"Error mounting Wii Front SD."))
+				"Error mounting Wii Front SD.")) {
+				__io_wiisd.shutdown(&__io_wiisd);
 				return false;
+			}
 			DEVICES[DEV_WIISD] = DEV_MOUNTED;
 			break;
 		
@@ -393,11 +408,14 @@ static bool initFAT(int device)
 			if (!__io_usbstorage.isInserted(&__io_usbstorage))
 			{
 				WaitPrompt("No USB device inserted!");
+				__io_usbstorage.shutdown(&__io_usbstorage);
 				return false;
 			}
 			if (!mount_storage_device(WIIUSB_PATH, &__io_usbstorage,
-				"Error mounting USB storage."))
+				"Error mounting USB storage.")) {
+				__io_usbstorage.shutdown(&__io_usbstorage);
 				return false;
+			}
 			DEVICES[DEV_WIIUSB] = DEV_MOUNTED;
 			break;
 #endif
@@ -1020,7 +1038,7 @@ static void format_transfer_size(s32 bytes, char *out, size_t out_size)
 		bytes = 0;
 	if (bytes >= 1024 * 1024)
 		snprintf(out, out_size, "%d.%d MB", bytes / (1024 * 1024),
-			(bytes % (1024 * 1024)) / (1024 * 105));
+			(bytes % (1024 * 1024)) * 10 / (1024 * 1024));
 	else if (bytes >= 1024)
 		snprintf(out, out_size, "%d KB", bytes / 1024);
 	else
